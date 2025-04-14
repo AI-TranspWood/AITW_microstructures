@@ -21,27 +21,41 @@ class Clock():
         super().__init__()
         self.name = name
         self.cumul = 0
+        self.cumul_local = 0
         self.num_calls = 0
+        self.num_calls_local = 0
 
     def __call__(self, func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            start = time.time()
-            result = func(*args, **kwargs)
-            self.num_calls += 1
-            self.cumul += time.time() - start
-            return result
+        if hasattr(func, 'clocked'):
+            @wraps(func)
+            def wrapper(*args, **kwargs):
+                start = time.time()
+                result = func(*args, **kwargs)
+                self.num_calls_local += 1
+                self.cumul_local += time.time() - start
+                return result
+        else:
+            @wraps(func)
+            def wrapper(*args, **kwargs):
+                start = time.time()
+                result = func(*args, **kwargs)
+                self.num_calls += 1
+                self.cumul += time.time() - start
+                return result
+
+        wrapper.clocked = True
 
         return wrapper
 
     def report(self):
-        if self.num_calls == 0:
+        num_calls = self.num_calls_local + self.num_calls
+        if num_calls == 0:
             return
-        tot_time = self.cumul
-        avg_time = tot_time / self.num_calls * 1000
+        tot_time = self.cumul + self.cumul_local
+        avg_time = tot_time / num_calls * 1000
 
         logger.info(
-            f'{self.name:>20s}   ({self.num_calls:>7d} CALLs): {tot_time:>13.4f} s  ({avg_time:>10.1f} ms/CALL)'
+            f'{self.name:>20s}   ({num_calls:>7d} CALLs): {tot_time:>13.4f} s  ({avg_time:>10.1f} ms/CALL)'
             )
 
     @staticmethod

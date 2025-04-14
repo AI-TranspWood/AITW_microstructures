@@ -5,36 +5,15 @@ from collections import defaultdict
 import numpy as np
 import numpy.typing as npt
 from PIL import Image
-from scipy.interpolate import CubicSpline, RegularGridInterpolator, griddata
+from scipy.interpolate import CubicSpline, griddata
 
 from .clocks import Clock
+from .distortion import get_distortion_grid, local_distort
 from .fit_elipse import fit_elipse
 from .loggers import logger
 from .params import RayCellParams
 
-dir_root = 'SaveBirch_'
-
-def local_distort(
-        x_grid: npt.NDArray, y_grid: npt.NDArray,
-        x0: npt.NDArray, y0: npt.NDArray,
-        k: tuple[float, float, float, float]
-    ) -> npt.NDArray:
-    """Local distortion of the image"""
-
-    k1, k2, k3, k4 = k
-    sigma = k3 / k2
-    k0 = k4 / k2
-
-    exp1 = np.exp(k1 * (x_grid - x0))
-    exp2 = np.exp(k2 * (x_grid - x0))
-    exp3 = np.exp(-((y_grid - y0) / sigma)**2 / 2)
-
-    # u = exp1 / (1 + exp1) - exp2 / (1 + exp2)
-    u = (exp1 - exp2) / (1 + exp1 + exp2 + exp1 * exp2)
-    u *= k0 * exp3
-
-    return u
-
+ROOT_DIR = os.getenv('ROOT_DIR', 'SaveBirch_')
 
 class RayCell:
     local_distortion_cutoff = 200
@@ -50,14 +29,8 @@ class RayCell:
 
     def get_ldist_grid(self, x_center: int, y_center: int):
         """Get the X,Y grids centered on (x_center, y_center) with cutoff of `local_distortion_cutoff`"""
-        ldc = self.local_distortion_cutoff
         sie_x, sie_y, _ = self.params.size_im_enlarge
-        x_grid, y_grid = np.mgrid[
-            max(0, x_center - ldc):min(sie_x, x_center + ldc),
-            max(0, y_center - ldc):min(sie_y, y_center + ldc)
-        ].astype(int)
-
-        return x_grid, y_grid
+        return get_distortion_grid(x_center, y_center, sie_x, sie_y, self.local_distortion_cutoff)
 
     def get_grid_all(self):
         """Specify the location of grid nodes and the thickness (with disturbance)"""
@@ -98,6 +71,7 @@ class RayCell:
 
         return ray_cell_x_ind_all.astype(int)
 
+    @Clock('vessels')
     def get_vessels_all(self, ray_cell_x_ind_all: npt.NDArray = None):
         """Get vessels"""
         # TODO: need testing
@@ -608,7 +582,7 @@ class RayCell:
         ray_column_rand = int(np.round(1 / 2 * ray_height))
 
         for m2, j_slice in enumerate(ray_width):
-            logger.debug('  %d/%d   %d', m2, len(ray_width), j_slice)
+            # logger.debug('  %d/%d   %d', m2, len(ray_width), j_slice)
             k0 = j_slice
             k1 = j_slice + ray_column_rand
             tmp0_1 = (max(1, k0) + min(k0 + ray_height, sie_z)) / 2
@@ -732,6 +706,8 @@ class RayCell:
 
         return vol_img_ref_final
 
+    @Clock('deformation')
+    @Clock('deform:generate')
     def generate_deformation(self, ray_cell_idx: npt.NDArray, indx_skip_all: npt.NDArray, idx_vessel_cen: npt.NDArray):
         """Add complicated deformation to the volume image. The deformation fields are generated separately.
         Then, they are summed together. Here u, v are initialized to be zero. Then they are summed."""
@@ -741,8 +717,6 @@ class RayCell:
 
         lx, ly, _ = self.x_grid_all.shape
         gx, gy = self.params.x_grid.shape
-
-        ldc = self.local_distortion_cutoff
 
         u = np.zeros((sie_x, sie_y), dtype=float)
         v = np.zeros_like(u, dtype=float)
@@ -821,8 +795,6 @@ class RayCell:
             local_dist = local_distort(xp, yp, xc, yc, k)
             u[xp, yp] += -s * local_dist
 
-        logger.info('u shape: %s', u.shape)
-
         k_grid[~cond, 2] = 2 + np.random.rand(lx, ly)[~cond]
         k_grid[~cond, 3] = 1 + np.random.rand(lx, ly)[~cond]
         k_grid[~cond & is_close_to_ray, 3] *= 0.3
@@ -833,8 +805,6 @@ class RayCell:
             xp, yp = self.get_ldist_grid(xc, yc)
             local_dist = local_distort(yp, xp, yc, xc, k)
             v[xp, yp] += -s * local_dist
-
-        logger.info('v shape: %s', v.shape)
 
         for xc, yc, cf in zip(xc_grid.flatten(), yc_grid.flatten(), is_close_to_ray_far.flatten()):
             if np.random.rand() >= 0.01:
@@ -855,6 +825,8 @@ class RayCell:
 
         return u, v, u1, v1
 
+    @Clock('deformation')
+    @Clock('deform:rc_shrink')
     def ray_cell_shrinking(self, width: npt.NDArray, idx_all: npt.NDArray, dist_v: npt.NDArray) -> npt.NDArray:
         """Shrink the ray cell width"""
         logger.info('=' * 80)
@@ -978,6 +950,8 @@ class RayCell:
 
         return v_all
 
+    @Clock('deformation')
+    @Clock('deform:apply')
     def apply_deformation(self, slice_ref: npt.NDArray, u: npt.NDArray, v: npt.NDArray) -> npt.NDArray:
         """Apply the deformation to the volume image"""
         logger.info('=' * 80)
@@ -1003,17 +977,18 @@ class RayCell:
     def root_dir(self):
         if self._root_dir is None:
             dir_cnt = 0
-            while os.path.exists(f'{dir_root}{dir_cnt}'):
+            while os.path.exists(f'{ROOT_DIR}{dir_cnt}'):
                 dir_cnt += 1
-            self._root_dir = f'{dir_root}{dir_cnt}'
+            self._root_dir = f'{ROOT_DIR}{dir_cnt}'
         return self._root_dir
 
+    @Clock('Disk IO')
     def create_dirs(self):
         """Ensure the output directories are created"""
         for dir_name in ['volImgBackBone', 'LocalDistVolume', 'LocalDistVolumeDispU', 'LocalDistVolumeDispV']:
             os.makedirs(os.path.join(self.root_dir, dir_name), exist_ok=True)
 
-    def save_slice(self, vol_img_ref: npt.NDArray, dirname: str):
+    def save_slices(self, vol_img_ref: npt.NDArray, dirname: str):
         """Save the requested slice of the generated volume image"""
         logger.debug('vol_img_ref.shape: %s', vol_img_ref.shape)
         logger.debug('min/max: %f %f', np.min(vol_img_ref), np.max(vol_img_ref))
@@ -1025,12 +1000,14 @@ class RayCell:
             self.save_2d_img(vol_img_ref[:, :, slice_idx], filename)
 
     @staticmethod
+    @Clock('Disk IO')
     def save_2d_img(data: npt.NDArray, filename: str):
         """Save 2D data to a TIFF file"""
         img = Image.fromarray(data.astype(np.uint8), mode='L')
         # img.show()
         img.save(filename)
 
+    @Clock('Disk IO')
     def save_distortion(self, u: npt.NDArray, v: npt.NDArray, slice_idx: int):
         """Save the distortion fields"""
         u_name = os.path.join(self.root_dir, 'LocalDistVolumeDispU', f'u_volImgRef_{slice_idx+1:05d}.csv')
@@ -1070,7 +1047,7 @@ class RayCell:
             logger.debug('   %d %s', i+1, width)
         logger.debug('ray_cell_x_ind_all_update: %s  %s', ray_cell_x_ind_all_update.shape, ray_cell_x_ind_all_update)
 
-        vol_img_ref = np.full(self.params.size_im_enlarge, 255, dtype=int)
+        vol_img_ref = np.full(self.params.size_im_enlarge, 255, dtype=float)
         vol_img_ref = self.generate_small_fibers(ray_cell_x_ind, indx_skip_all, vol_img_ref)
         vol_img_ref = self.generate_large_fibers(indx_vessel, indx_vessel_cen, indx_skip_all, vol_img_ref)
 
@@ -1081,7 +1058,7 @@ class RayCell:
 
         # Save the generated volume
         self.create_dirs()
-        self.save_slice(vol_img_ref, 'volImgBackBone')
+        self.save_slices(vol_img_ref, 'volImgBackBone')
 
         # u1 and v1 are in a commented part of the code. Prob used in original code?
         u, v, _, _ = self.generate_deformation(ray_cell_x_ind, indx_skip_all, indx_vessel_cen)
@@ -1107,4 +1084,5 @@ class RayCell:
             filename = os.path.join(self.root_dir, 'LocalDistVolume', f'volImgRef_{slice_idx+1:05d}.tiff')
             self.save_2d_img(img_interp, filename)
 
+        Clock.report_all()
         logger.info('======== DONE ========')
