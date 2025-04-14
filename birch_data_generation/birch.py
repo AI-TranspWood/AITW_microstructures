@@ -437,8 +437,6 @@ class BirchMicrostructure:
         x_vector = self.params.x_vector
         y_vector = self.params.y_vector
 
-        # TODO: Vectorize this like small_fibers
-
         sie_x, sie_y, sie_z = self.params.size_im_enlarge
 
         # vessel_length = self.params.vessel_length
@@ -736,7 +734,6 @@ class BirchMicrostructure:
         x_slice = self.x_grid_all[:, :, 0]
         y_slice = self.y_grid_all[:, :, 0]
 
-        # TODO: check if this condition can be enforced geometrically
         skip_idx = set()
         for ix, iy in indx_skip_all.reshape(-1, 2):
             if iy % 2 == 0:
