@@ -14,7 +14,7 @@ pip install .
 ### Script
 
 ```python
-from birch_data_generation import BirchMicrostructure, RayCellParams
+from wood_microstructure import BirchMicrostructure, RayCellParams
 
 params = RayCellParams.from_json('FILE_NAME.json')
 

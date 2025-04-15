@@ -5,9 +5,9 @@ build-backend = "flit_core.buildapi"
 
 [project]
 # See https://www.python.org/dev/peps/pep-0621/
-name = "AITW_birch_data_generation"
+name = "AITW_wood_microstructure"
 dynamic = ["version"] # read from ocr_translate/__init__.py
-description = "A Python interface to birch_data_generation"
+description = "A Python rewrite of Wood-Microstructure-Modeling"
 authors = []
 readme = "README.md"
 license = { file = "LICENSE.txt" }
@@ -17,7 +17,6 @@ classifiers = [
     "Operating System :: POSIX :: Linux",
     "Operating System :: MacOS",
     "Programming Language :: Python",
-    "Programming Language :: Python :: 3.13",
 ]
 keywords = ["birch", "wood", "microstructure"]
 requires-python = ">=3.9"
@@ -41,10 +40,10 @@ release = [
 ]
 
 [project.scripts]
-wood_ms = "birch_data_generation.cli.main:wood_microstructure"
+wood_ms = "wood_microstructure.cli.main:wood_microstructure"
 
 [tool.flit.module]
-name = "birch_data_generation"
+name = "wood_microstructure"
 
 [tool.flit.sdist]
 exclude = [
