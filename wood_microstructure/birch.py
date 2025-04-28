@@ -177,7 +177,7 @@ class BirchMicrostructure(WoodMicrostructure):
                 if _h is None:
                     continue
                 if np.any(np.isnan([_h, _k, _r1, _r2])):
-                    self.logger.warning('NaN in ellipse parameters: %f %f %f %f', _h, _k, _r1, _r2)
+                    self.logger.warning('NaN in ellipse parameters: h=%.1f k=%.1ff r1=%.1f r2=%.1f', _h, _k, _r1, _r2)
                     continue
                 mr = np.floor(max(_r1, _r2))
 
@@ -196,6 +196,43 @@ class BirchMicrostructure(WoodMicrostructure):
                 vol_img_ref[rx_grid, ry_grid, i_slice] /= 1 + np.exp(-(in_elipse_2 - 1) * 20)
 
         return vol_img_ref.astype(int)
+
+    def _generate_raycell_cell_r(self, interp1: npt.NDArray, interp2: npt.NDArray, dx: npt.NDArray, k: int):
+        """Get the value of `cell_r` for `generate_raycell`"""
+        ray_height = self.params.ray_height
+        sie_z = self.params.size_im_enlarge[2]
+        return np.column_stack((
+            (interp2 - interp1) / 2,
+            np.full(dx.shape, (np.min((k + ray_height, sie_z)) - np.max((1, k))) / 2)
+        )) + 0.5
+    def _generate_raycell_valid_idx(
+            self, vel_col_r: npt.NDArray, vel_col_r1: npt.NDArray, flag: int, cet: int
+        ) -> npt.NDArray:
+        """Get the value of `valid_idx` for `generate_raycell`
+
+        Args:
+            vel_col_r (npt.NDArray): First column of the ray cell
+            vel_col_r1 (npt.NDArray): Second column of the ray cell
+            flag (int): -1/+1 if first/last ray cell, 0 otherwise
+            cet (int): Cell end thickness
+        """
+        if flag == -1:
+            start = cet
+            end = -cet // 2
+        elif flag == 1:
+            start = cet // 2 - 1
+            end = -cet // 2
+        else:
+            start = cet // 2 - 1
+            end = -cet // 2
+
+        # -1 for 0-indexing
+        valid_idx = np.arange(
+            vel_col_r + start - 1,
+            vel_col_r1 + end
+        )
+        valid_idx = set(int(_) for _ in valid_idx)
+        return valid_idx
 
     def _generate(self):
         """Generate ray cells"""
@@ -238,7 +275,7 @@ class BirchMicrostructure(WoodMicrostructure):
         if self.params.is_exist_ray_cell:
             for idx, width in zip(ray_cell_x_ind, ray_cell_width):
                 self.logger.debug('Generating ray cell: %s / %s', idx, width)
-                vol_img_ref = self.generate_raycell(idx, width, vol_img_ref)
+                vol_img_ref = self.generate_raycell(idx, width, vol_img_ref, self.thickness_all)
 
         # Save the generated volume
         self.create_dirs()

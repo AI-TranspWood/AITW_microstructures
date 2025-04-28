@@ -241,9 +241,29 @@ class WoodMicrostructure(ABC):
 
         return vessel_end_loc.astype(int)
 
+    @abstractmethod
+    def _generate_raycell_cell_r(self, interp1: npt.NDArray, interp2: npt.NDArray, dx: npt.NDArray, k: int):
+        """Get the value of `cell_r` for `generate_raycell`"""
+        pass
+
+    @abstractmethod
+    def _generate_raycell_valid_idx(
+            self, vel_col_r: npt.NDArray, vel_col_r1: npt.NDArray, flag: int, cet: int
+        ) -> npt.NDArray:
+        """Get the value of `valid_idx` for `generate_raycell`
+
+        Args:
+            vel_col_r (npt.NDArray): First column of the ray cell
+            vel_col_r1 (npt.NDArray): Second column of the ray cell
+            flag (int): -1/+1 if first/last ray cell, 0 otherwise
+            cet (int): Cell end thickness
+        """
+        pass
+
     @Clock('ray_cell')
     def generate_raycell(
-            self, ray_idx: int, ray_width: npt.NDArray, input_volume: npt.NDArray
+            self, ray_idx: int, ray_width: npt.NDArray, input_volume: npt.NDArray,
+            thickness_all: npt.NDArray
         ) -> npt.NDArray:
         """Generate ray cell
 
@@ -251,6 +271,7 @@ class WoodMicrostructure(ABC):
             ray_idx (int): y-index of the ray cell
             ray_width (npt.NDArray): Ray cell width
             input_volume (npt.NDArray): Input 3D gray-scale image volume to modify
+            thickness_all (npt.NDArray): Thickness of the ray cells
 
         Returns:
             npt.NDArray: Modified 3D gray-scale image volume with ray cells
@@ -266,17 +287,12 @@ class WoodMicrostructure(ABC):
         rcl_d2_r = np.round(ray_cell_length / 2)
 
         sie_x, _, sie_z = self.params.size_im_enlarge
-        # gx, gy = self.params.x_grid.shape
 
         x_grid_all = self.x_grid_all
         y_grid_all = self.y_grid_all
-        thick_all = self.thickness_all
 
         cell_end_thick = self.params.cell_end_thick
-        cet_d2_p1 = cell_end_thick // 2 + 1
-        cet_d2_m1 = cell_end_thick // 2 - 1
 
-        # ray_idx = np.array(ray_idx).flatten().astype(int)
         ray_width = np.array(ray_width).astype(int)
 
         dx = np.arange(sie_x)
@@ -306,17 +322,14 @@ class WoodMicrostructure(ABC):
                 if t not in self.params.save_slice:
                     continue
 
-
                 vel = vessel_end_loc[i]
                 vel = vel[vel <= sie_x + rcl_d2]
-
-                # rand = ray_column_rand * ((column_idx + 1) % 2)
 
                 interp_x0 = x_grid_all[:, column_idx, t]
                 interp_y0 = y_grid_all[:, column_idx, t]
                 interp_x1 = x_grid_all[:, column_idx + 1, t]
                 interp_y1 = y_grid_all[:, column_idx + 1, t]
-                interp_thick = thick_all[:, column_idx, t]
+                interp_thick = thickness_all[:, column_idx, t]
                 tmp_2 = rcl_d2_r if m2 % 2 else 0
 
                 try:
@@ -337,14 +350,11 @@ class WoodMicrostructure(ABC):
                     np.round((y_interp2_c + y_interp1_c)) / 2,
                     np.full(dx.shape, tmp_1)
                 ))
-                cell_r = np.column_stack((
-                    (y_interp2_c - y_interp1_c) / 2,
-                    np.full(dx.shape, (np.min((k + ray_height, sie_z)) - np.max((1, k))) / 2)
-                )) + 0.5
+                cell_r = self._generate_raycell_cell_r(y_interp1_c, y_interp2_c, dx, k)
 
-                d_col = int(cell_end_thick)
-                for vel_r, vel_r1 in zip(vel[:-1], vel[1:]):
-                    # tmp_2 = rcl_d2_r if m2 % 2 else 0
+                flag = -1
+                check = len(vel) - 2
+                for cnt,(vel_r, vel_r1) in enumerate(zip(vel[:-1], vel[1:])):
                     vel_col_r = int(vel_r + tmp_2)
                     if vel_col_r < 1:
                         continue
@@ -357,14 +367,12 @@ class WoodMicrostructure(ABC):
                         [np.max((0, k)), np.min((k + ray_height, sie_x))]
                     ])
 
-                    valid_idx = np.arange(
-                        vel_col_r + d_col,
-                        vel_col_r1 - cet_d2_p1  #Right inclusive
-                    )
-                    valid_idx = set(int(_) for _ in valid_idx)
-                    d_col = cet_d2_m1
+                    valid_idx = self._generate_raycell_valid_idx(vel_col_r, vel_col_r1, flag, cell_end_thick)
+                    flag = 0 if cnt < check else 1
 
                     for idx in range(vel_col_r, vel_col_r1):
+                        if idx not in valid_idx:
+                            continue
                         if j_slice == np.min(ray_width):
                             vol_img_ref_final[
                                 idx,
@@ -384,8 +392,6 @@ class WoodMicrostructure(ABC):
                                 int(cell_neigh_pt[2, 0]):int(cell_neigh_pt[2, 1])
                             ] = 255
 
-                        if idx not in valid_idx:
-                            continue
 
                         for j in range(int(cell_neigh_pt[1, 0]), int(cell_neigh_pt[1, 1]) + 1):
                             for s in range(int(cell_neigh_pt[2, 0]), int(cell_neigh_pt[2, 1]) + 1):
