@@ -234,8 +234,8 @@ class SpruceMicrostructure(WoodMicrostructure):
                     continue
                 rx_grid, ry_grid = np.mgrid[min_x:max_x, min_y:max_y].astype(int)
                 in_elipse_2 = (
-                    (rx_grid - _h)**exp / (_r1 - thick - skip_cell_thick)**exp +
-                    (ry_grid - _k)**exp / (_r2 - thick - skip_cell_thick)**exp
+                    np.abs(rx_grid - _h)**exp / np.abs(_r1 - thick - skip_cell_thick)**exp +
+                    np.abs(ry_grid - _k)**exp / np.abs(_r2 - thick - skip_cell_thick)**exp
                 )
 
                 vol_img_ref[rx_grid, ry_grid, i_slice] /= 1 + np.exp(-(in_elipse_2 - 1) * 20)
