@@ -126,6 +126,18 @@ class SpruceMicrostructure(WoodMicrostructure):
 
         return vessel_all.astype(int)
 
+    def get_indx_skip_all(self, vessel_all: npt.NDArray) -> npt.NDArray:
+        """Get the indexes of the grid nodes where fibers are not generated"""
+        return np.empty((0, 6, 2), dtype=int)
+
+    def get_indx_ves_edges(self, vessel_all: npt.NDArray) -> npt.NDArray:
+        """Get the indexes of the grid nodes at the edges of the vessels"""
+        return np.empty((0, 6, 2), dtype=int)
+
+    def get_indx_vessel_cen(self, vessel_all: npt.NDArray) -> npt.NDArray:
+        """Get the indexes of the grid nodes where fibers are not generated"""
+        return np.empty((0, 2), dtype=int)
+
     @Clock('small_fibers')
     def generate_small_fibers(
             self,
@@ -286,6 +298,30 @@ class SpruceMicrostructure(WoodMicrostructure):
         valid_idx = set(int(_) for _ in valid_idx)
         return valid_idx
 
+    def _get_k_grid1(self, is_ctr: npt.NDArray, is_ctr_far: npt.NDArray, vess_cond: npt.NDArray) -> npt.NDArray:
+        """Get the k_grid of parameters for the deformation map"""
+        lx, ly = is_ctr.shape
+
+        k_grid = np.empty((lx, ly, 4))
+
+        k_grid[..., 0] = 0.1
+        k_grid[..., 1] = 0.08
+        k_grid[..., 2] = 2
+        k_grid[..., 3] = 8 + np.random.rand(lx, ly) * 10
+
+        return k_grid
+
+    def _get_k_grid2(
+        self, k_grid: npt.NDArray, is_ctr: npt.NDArray, is_ctr_far: npt.NDArray, vess_cond: npt.NDArray
+    ) -> npt.NDArray:
+        """Regenerate part of the k_grid for different random numbers between U and V computation."""
+        lx, ly = is_ctr.shape
+
+        k_grid[is_ctr, 3] = 2 + np.random.rand(lx, ly)[is_ctr] * 2
+        k_grid[~is_ctr, 3] = 6 + np.random.rand(lx, ly)[~is_ctr] * 9
+
+        return k_grid
+
     def _generate(self):
         """Generate ray cells"""
         np.random.seed(self.params.random_seed)
@@ -311,12 +347,12 @@ class SpruceMicrostructure(WoodMicrostructure):
         self.logger.debug('vessel_all.shape: %s', vessel_all.shape)
         self.logger.debug('vessel_all: %s', vessel_all)
 
-        # indx_skip_all = ves.get_grid_idx_in_vessel(vessel_all)
-        # indx_ves_edges = ves.get_grid_idx_edges(vessel_all)
-        # indx_vessel_cen = vessel_all
-        # self.logger.debug('indx_skip_all: %s', indx_skip_all.shape)
-        # self.logger.debug('indx_vessel: %s', indx_ves_edges.shape)
-        # self.logger.debug('indx_vessel_cen: %s', indx_vessel_cen.shape)
+        indx_skip_all = self.get_indx_skip_all(vessel_all)
+        indx_ves_edges = self.get_indx_ves_edges(vessel_all)
+        indx_vessel_cen = self.get_indx_vessel_cen(vessel_all)
+        self.logger.debug('indx_skip_all: %s', indx_skip_all.shape)
+        self.logger.debug('indx_vessel: %s', indx_ves_edges.shape)
+        self.logger.debug('indx_vessel_cen: %s', indx_vessel_cen.shape)
 
         ray_cell_x_ind, ray_cell_width = self.distrbute_ray_cells(ray_cell_x_ind_all)
         self.logger.debug('ray_cell_x_ind: %s  %s', ray_cell_x_ind.shape, ray_cell_x_ind)
@@ -339,6 +375,7 @@ class SpruceMicrostructure(WoodMicrostructure):
 
         # # u1 and v1 are in a commented part of the code. Prob used in original code?
         # u, v, _, _ = self.generate_deformation(ray_cell_x_ind, indx_skip_all, indx_vessel_cen)
+        u, v = self.generate_deformation(ray_cell_x_ind, indx_skip_all, indx_vessel_cen)
         # self.logger.debug('u.shape: %s  min/max: %s %s', u.shape, u.min(), u.max())
         # self.logger.debug('v.shape: %s  min/max: %s %s', v.shape, v.min(), v.max())
 

@@ -32,7 +32,27 @@ class WoodMicrostructure(ABC):
     @property
     @abstractmethod
     def save_prefix(self) -> int:
-        """Local distortion cutoff value"""
+        """Prefix for saving files"""
+
+    @abstractmethod
+    def generate_vessel_indexes(self, ray_cell_x_ind_all: npt.NDArray = None) -> npt.NDArray:
+        """Generate the vessel indexes"""
+        pass
+
+    @abstractmethod
+    def get_indx_skip_all(self, indx_vessel: npt.NDArray) -> npt.NDArray:
+        """Get the indexes of the vessels to be skipped"""
+        pass
+
+    @abstractmethod
+    def get_indx_ves_edges(self, indx_vessel: npt.NDArray) -> npt.NDArray:
+        """Get the indexes of the vessels edges for ellipse fitting"""
+        pass
+
+    @abstractmethod
+    def get_indx_vessel_cen(self, indx_vessel: npt.NDArray) -> npt.NDArray:
+        """Get the indexes of the vessel centers"""
+        pass
 
     def __init__(self, params: BaseParams, outdir: str = None):
         self.params = params
@@ -412,6 +432,18 @@ class WoodMicrostructure(ABC):
 
         return vol_img_ref_final
 
+    @abstractmethod
+    def _get_k_grid1(self, is_ctr: npt.NDArray, is_ctr_far: npt.NDArray, vess_cond: npt.NDArray) -> npt.NDArray:
+        """Get the k_grid of parameters for the deformation map"""
+        pass
+
+    @abstractmethod
+    def _get_k_grid2(
+        self, k_grid: npt.NDArray, is_ctr: npt.NDArray, is_ctr_far: npt.NDArray, vess_cond: npt.NDArray
+    ) -> npt.NDArray:
+        """Regenerate part of the k_grid for different random numbers between U and V computation."""
+        pass
+
     @Clock('deformation')
     @Clock('deform:generate')
     def generate_deformation(self, ray_cell_idx: npt.NDArray, indx_skip_all: npt.NDArray, idx_vessel_cen: npt.NDArray):
@@ -427,8 +459,8 @@ class WoodMicrostructure(ABC):
 
         u = np.zeros((sie_x, sie_y), dtype=float)
         v = np.zeros_like(u, dtype=float)
-        u1 = np.zeros_like(u, dtype=float)
-        v1 = np.zeros_like(u, dtype=float)
+        # u1 = np.zeros_like(u, dtype=float)
+        # v1 = np.zeros_like(u, dtype=float)
 
         lx = (gx - 1) // 2
         ly = (gy - 1) // 2
@@ -476,24 +508,8 @@ class WoodMicrostructure(ABC):
 
         s_grid = np.sign(np.random.randn(lx, ly))
         s_grid[cond] = -1
-        k_grid = np.empty((lx, ly, 4))
 
-        k_grid[..., 0] = 0.08
-        k_grid[..., 1] = 0.06
-        k_grid[..., 2] = 2
-        k_grid[..., 3] = 15
-
-        # k_grid[~cond, 0] = 0.08
-        # k_grid[~cond, 1] = 0.06
-        k_grid[~cond, 2] = 2 + np.random.rand(lx, ly)[~cond]
-        k_grid[~cond, 3] = 1 + np.random.rand(lx, ly)[~cond]
-        k_grid[~cond & is_close_to_ray, 3] *= 0.3
-
-        k_grid[cond, 0] = 0.06
-        k_grid[cond, 1] = 0.055
-        # k_grid[cond, 2] = 2
-        k_grid[cond & is_close_to_ray_far, 3] = 3 + 5 * np.random.rand(lx, ly)[cond & is_close_to_ray_far]
-        # k_grid[cond & ~is_close_to_ray_far, 3] = 15
+        k_grid = self._get_k_grid1(is_close_to_ray, is_close_to_ray_far, cond)
 
         for xc, yc, k, s in zip(xc_grid.flatten(), yc_grid.flatten(), k_grid.reshape(-1, 4), s_grid.flatten()):
             if (xc, yc) in skip_idx:
@@ -502,9 +518,7 @@ class WoodMicrostructure(ABC):
             local_dist = dist.local_distort(xp, yp, xc, yc, k)
             u[xp, yp] += -s * local_dist
 
-        k_grid[~cond, 2] = 2 + np.random.rand(lx, ly)[~cond]
-        k_grid[~cond, 3] = 1 + np.random.rand(lx, ly)[~cond]
-        k_grid[~cond & is_close_to_ray, 3] *= 0.3
+        k_grid = self._get_k_grid2(k_grid, is_close_to_ray, is_close_to_ray_far, cond)
 
         for xc, yc, k, s in zip(xc_grid.flatten(), yc_grid.flatten(), k_grid.reshape(-1, 4), s_grid.flatten()):
             if (xc, yc) in skip_idx:
@@ -513,24 +527,25 @@ class WoodMicrostructure(ABC):
             local_dist = dist.local_distort(yp, xp, yc, xc, k)
             v[xp, yp] += -s * local_dist
 
-        for xc, yc, cf in zip(xc_grid.flatten(), yc_grid.flatten(), is_close_to_ray_far.flatten()):
-            if np.random.rand() >= 0.01:
-                continue
-            k = [0.01, 0.008, 1.5 * (1 + np.random.rand()), 0.2 * (1 + np.random.rand())]
-            if not cf:
-                k[3] *= 2.5
+        # for xc, yc, cf in zip(xc_grid.flatten(), yc_grid.flatten(), is_close_to_ray_far.flatten()):
+        #     if np.random.rand() >= 0.01:
+        #         continue
+        #     k = [0.01, 0.008, 1.5 * (1 + np.random.rand()), 0.2 * (1 + np.random.rand())]
+        #     if not cf:
+        #         k[3] *= 2.5
 
-            xp, yp = dist.get_distortion_grid(xc, yc, sie_x, sie_y, self.local_distortion_cutoff)
-            if np.random.randn() > 0:
-                local_dist = dist.local_distort(xp, yp, xc, yc, k)
-                u1[xp, yp] += np.sign(np.random.randn()) * local_dist
-                # u1 += np.sign(np.random.randn()) * local_distort(x, y, xc, yc, k)
-            else:
-                local_dist = dist.local_distort(yp, xp, yc, xc, k)
-                v1[xp, yp] += np.sign(np.random.randn()) * local_dist
-                # v1 += np.sign(np.random.randn()) * local_distort(y, x, yc, xc, k)
+        #     xp, yp = dist.get_distortion_grid(xc, yc, sie_x, sie_y, self.local_distortion_cutoff)
+        #     if np.random.randn() > 0:
+        #         local_dist = dist.local_distort(xp, yp, xc, yc, k)
+        #         u1[xp, yp] += np.sign(np.random.randn()) * local_dist
+        #         # u1 += np.sign(np.random.randn()) * local_distort(x, y, xc, yc, k)
+        #     else:
+        #         local_dist = dist.local_distort(yp, xp, yc, xc, k)
+        #         v1[xp, yp] += np.sign(np.random.randn()) * local_dist
+        #         # v1 += np.sign(np.random.randn()) * local_distort(y, x, yc, xc, k)
 
-        return u, v, u1, v1
+        return u, v
+        # return u, v, u1, v1
 
     @Clock('deformation')
     @Clock('deform:rc_shrink')

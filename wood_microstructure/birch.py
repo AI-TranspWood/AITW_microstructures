@@ -61,7 +61,7 @@ class BirchMicrostructure(WoodMicrostructure):
         return ray_cell_x_ind_all.astype(int)
 
     @Clock('vessels')
-    def generate_vessel_indexes(self, ray_cell_x_ind_all: npt.NDArray = None):
+    def generate_vessel_indexes(self, ray_cell_x_ind_all: npt.NDArray = None) -> npt.NDArray:
         """Get vessels"""
         self.logger.info('=' * 80)
         self.logger.info('Generating vessels...')
@@ -87,6 +87,18 @@ class BirchMicrostructure(WoodMicrostructure):
         vessel_all = ves.filter_edge(vessel_all, lx, ly)
 
         return vessel_all.astype(int)
+
+    def get_indx_skip_all(self, vessel_all: npt.NDArray) -> npt.NDArray:
+        """Get the indexes of the grid nodes where fibers are not generated"""
+        return ves.get_grid_idx_in_vessel(vessel_all)
+
+    def get_indx_ves_edges(self, vessel_all: npt.NDArray) -> npt.NDArray:
+        """Get the indexes of the grid nodes at the edges of the vessels"""
+        return ves.get_grid_idx_edges(vessel_all)
+
+    def get_indx_vessel_cen(self, vessel_all: npt.NDArray) -> npt.NDArray:
+        """Get the indexes of the grid nodes where fibers are not generated"""
+        return vessel_all
 
     @Clock('small_fibers')
     def generate_small_fibers(
@@ -205,6 +217,7 @@ class BirchMicrostructure(WoodMicrostructure):
             (interp2 - interp1) / 2,
             np.full(dx.shape, (np.min((k + ray_height, sie_z)) - np.max((1, k))) / 2)
         )) + 0.5
+
     def _generate_raycell_valid_idx(
             self, vel_col_r: npt.NDArray, vel_col_r1: npt.NDArray, flag: int, cet: int
         ) -> npt.NDArray:
@@ -234,6 +247,41 @@ class BirchMicrostructure(WoodMicrostructure):
         valid_idx = set(int(_) for _ in valid_idx)
         return valid_idx
 
+    def _get_k_grid1(self, is_ctr: npt.NDArray, is_ctr_far: npt.NDArray, vess_cond: npt.NDArray) -> npt.NDArray:
+        """Get the k_grid of parameters for the deformation map"""
+        lx, ly = is_ctr.shape
+        k_grid = np.empty((lx, ly, 4))
+
+        k_grid[..., 0] = 0.08
+        k_grid[..., 1] = 0.06
+        k_grid[..., 2] = 2
+        k_grid[..., 3] = 15
+
+        # k_grid[~cond, 0] = 0.08
+        # k_grid[~cond, 1] = 0.06
+        k_grid[~vess_cond, 2] = 2 + np.random.rand(lx, ly)[~vess_cond]
+        k_grid[~vess_cond, 3] = 1 + np.random.rand(lx, ly)[~vess_cond]
+        k_grid[~vess_cond & is_ctr, 3] *= 0.3
+
+        k_grid[vess_cond, 0] = 0.06
+        k_grid[vess_cond, 1] = 0.055
+        # k_grid[vess_cond, 2] = 2
+        k_grid[vess_cond & is_ctr_far, 3] = 3 + 5 * np.random.rand(lx, ly)[vess_cond & is_ctr_far]
+
+        return k_grid
+
+    def _get_k_grid2(
+        self, k_grid: npt.NDArray, is_ctr: npt.NDArray, is_ctr_far: npt.NDArray, vess_cond: npt.NDArray
+    ) -> npt.NDArray:
+        """Regenerate part of the k_grid for different random numbers between U and V computation."""
+        lx, ly = is_ctr.shape
+
+        k_grid[~vess_cond, 2] = 2 + np.random.rand(lx, ly)[~vess_cond]
+        k_grid[~vess_cond, 3] = 1 + np.random.rand(lx, ly)[~vess_cond]
+        k_grid[~vess_cond & is_ctr, 3] *= 0.3
+
+        return k_grid
+
     def _generate(self):
         """Generate ray cells"""
         np.random.seed(self.params.random_seed)
@@ -253,9 +301,9 @@ class BirchMicrostructure(WoodMicrostructure):
         self.logger.debug('vessel_all.shape: %s', vessel_all.shape)
         # self.logger.debug('vessel_all: %s', vessel_all)
 
-        indx_skip_all = ves.get_grid_idx_in_vessel(vessel_all)
-        indx_ves_edges = ves.get_grid_idx_edges(vessel_all)
-        indx_vessel_cen = vessel_all
+        indx_skip_all = self.get_indx_skip_all(vessel_all)
+        indx_ves_edges = self.get_indx_ves_edges(vessel_all)
+        indx_vessel_cen = self.get_indx_vessel_cen(vessel_all)
         self.logger.debug('indx_skip_all: %s', indx_skip_all.shape)
         self.logger.debug('indx_vessel: %s', indx_ves_edges.shape)
         self.logger.debug('indx_vessel_cen: %s', indx_vessel_cen.shape)
@@ -282,7 +330,8 @@ class BirchMicrostructure(WoodMicrostructure):
         self.save_slices(vol_img_ref, 'volImgBackBone')
 
         # u1 and v1 are in a commented part of the code. Prob used in original code?
-        u, v, _, _ = self.generate_deformation(ray_cell_x_ind, indx_skip_all, indx_vessel_cen)
+        # u, v, _, _ = self.generate_deformation(ray_cell_x_ind, indx_skip_all, indx_vessel_cen)
+        u, v = self.generate_deformation(ray_cell_x_ind, indx_skip_all, indx_vessel_cen)
         self.logger.debug('u.shape: %s  min/max: %s %s', u.shape, u.min(), u.max())
         self.logger.debug('v.shape: %s  min/max: %s %s', v.shape, v.min(), v.max())
 
