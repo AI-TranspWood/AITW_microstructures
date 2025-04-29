@@ -13,10 +13,12 @@ pip install .
 
 ### Script
 
-```python
-from wood_microstructure import BirchMicrostructure, RayCellParams
+Example for birch microstructure generation.
 
-params = RayCellParams.from_json('FILE_NAME.json')
+```python
+from wood_microstructure import BirchMicrostructure, BirchParams
+
+params = BirchParams.from_json('FILE_NAME.json')
 
 for param in params:
     birch = BirchMicrostructure(param)
@@ -27,23 +29,26 @@ for param in params:
 
 The installation will make available a `wood_ms` command line interface.
 
-Use the `wood_ms birch --help` flag to see all available options.
+- Run `wood_ms --help` to see the available wood microstructures.
+- Run `wood_ms WOOD_TYPE --help` flag to see all available options.
+
+Example for birch microstructure generation:
 
 ```bash
-wood_ms birch -v --json_file INPUT_FILE_PATH.json --max-parallel 2
+wood_ms birch --json_file examples/example_birch.json
 ```
 
 #### Tab autocompletion
 
 Enabling tab autocompletion https://click.palletsprojects.com/en/stable/shell-completion/
 
-E.G for `bash` add the following
+E.G for `bash` run the command
 
 ```bash
 eval "$(_WOOD_MS_COMPLETE=bash_source wood_ms)"
 ```
 
-to either `~/.bashrc` or if you are using a virtual environment to `bin/activate` of the virtual environment.
+You can also add it to either `~/.bashrc` or, if you are using a virtual environment, to `bin/activate` of the virtual environment to avoid running the command for every new shell.
 
 ## NOTE
 
