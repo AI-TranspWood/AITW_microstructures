@@ -96,6 +96,8 @@ def filter_edge(vessel_all: npt.NDArray, lx: int, ly: int) -> npt.NDArray:
             all_idx.append(i)
     return vessel_all[all_idx]
 
+# TODO: CHECK if vessels are not supposed to overlap, the number here might not be correct
+#       Fairly sure this behaves the same as the original code though
 @Clock('vessels')
 def extend(vessel_all: npt.NDArray, lx: int, ly: int) -> npt.NDArray:
     """The vessels are extended. Some vessels are extended to be double-vessel cluster, some are
@@ -118,21 +120,19 @@ def extend(vessel_all: npt.NDArray, lx: int, ly: int) -> npt.NDArray:
 
         sign1 = np.random.choice([-1, 1])
         sign2 = np.random.choice([-1, 1])
+        possibility = np.random.rand(1)
 
+        temp = np.empty((0, 2))
         if len(mark0) > 1:
-            vessel_all_extend = np.vstack((vessel_all_extend, vessel))
-            possibility = np.random.rand(1)
             if len(mark1) <= 1:
                 if possibility < 0.2:
                     temp = [vessel[0] + 6 + sign1, vessel[1] + sign2 * 2]
-                    vessel_all_extend = np.vstack((vessel_all_extend, temp))
                 elif possibility < 0.5:
                     temp = [vessel[0] + 6, vessel[1]]
-                    vessel_all_extend = np.vstack((vessel_all_extend, temp))
         else:
             if vessel[0] + 12 < lx and vessel[1] + 10 < ly:
+                # TODO:this should probably be a +6 or +7 if the vessels cant overlap
                 temp0 = [vessel[0] + 5 + sign1, vessel[1]]
-                possibility = np.random.rand(1)
                 if possibility < 0.3:
                     temp = np.vstack((
                         temp0,
@@ -141,11 +141,11 @@ def extend(vessel_all: npt.NDArray, lx: int, ly: int) -> npt.NDArray:
                 else:
                     temp = np.vstack((
                         temp0,
+                        # TODO:this should probably be a +6 or +7 if the vessels cant overlap
                         [temp0[0] + 5 + sign2, temp0[1]]
                     ))
-                vessel_all_extend = np.vstack((vessel_all_extend, vessel, temp))
-            else:
-                vessel_all_extend = np.vstack((vessel_all_extend, vessel))
+        vessel_all_extend = np.vstack((vessel_all_extend, vessel, temp))
+
     return vessel_all_extend
 
 @Clock('vessels')

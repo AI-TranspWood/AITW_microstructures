@@ -213,6 +213,8 @@ class WoodMicrostructure(ABC):
             t_all[:, 0::2] = t_slice[1:-2:2, 1:-2:4]
             t_all[:, 1::2] = t_slice[2:-1:2, 3:-2:4]
 
+            # Apply the same as above but for a generalized list of neighboring locations to get the points to fit
+            # the ellipses with a shape of (lx, ly, 4, 2) ~ (GRID_X_IDX, GRID_Y_IDX, NEIGHBOR_IDX, X/Y)
             for i,(dx,dy) in enumerate(neigh_loc.T):
                 slice_1_1 = slice(1+dx, -2+dx, 2)
                 slice_2_1 = slice(2+dx, (-1+dx) or None, 2)
@@ -228,8 +230,11 @@ class WoodMicrostructure(ABC):
 
             r1, r2, h, k = fit_elipse(point_coords)  # Estimate the coefficients of the ellipse. (lx, ly, 4)
 
-            # Set a very high value for h in nodes that should be ignored
+            # Skip ellipse generation based on mask:
+            # - fiber inside ray cell
+            # - fiber inside a vessel
             h[overflow_mask] = None
+            # Skip ellipse generation if fiber has ended along the Z axis
             h[self.get_fiber_end_condition(lx, ly, i_slice)] = None
 
             # The alternative is to write the full x/y grid and denote it into sub-domains based on the closest h/k
@@ -238,6 +243,7 @@ class WoodMicrostructure(ABC):
                 t_all.flatten(), r1.flatten(), r2.flatten(), h.flatten(), k.flatten(), exp_ellipse_2.flatten()
             ):
                 if _h is None:
+                    # Skip ellipse generation
                     continue
                 if np.any(np.isnan([_h, _k, _r1, _r2])):
                     self.logger.debug('NaN in ellipse parameters: h=%.1f k=%.1ff r1=%.1f r2=%.1f', _h, _k, _r1, _r2)
@@ -926,7 +932,7 @@ class WoodMicrostructure(ABC):
             self.logger.debug('   %d %s', i+1, width)
 
         vol_img_ref = np.full(self.params.size_im_enlarge, 255, dtype=float)
-        vol_img_ref = self.generate_small_fibers(ray_cell_x_ind, np.empty((0,2)), vol_img_ref)
+        vol_img_ref = self.generate_small_fibers(ray_cell_x_ind, indx_skip_all, vol_img_ref)
         vol_img_ref = self.generate_large_fibers(indx_ves_edges, indx_vessel_cen, vol_img_ref)
 
         if self.params.is_exist_ray_cell:
