@@ -8,12 +8,13 @@ import numpy.typing as npt
 from PIL import Image
 from scipy.interpolate import CubicSpline, griddata
 
-from . import vessels as v
+from . import distortion as dist
+from . import ray_cells as rcl
 from .clocks import Clock
-from .distortion import get_distortion_grid, local_distort
+# from .distortion import get_distortion_grid, local_distort
 from .fit_elipse import fit_elipse, fit_ellipse_6pt
-from .loggers import add_file_logger, get_logger
-from .params import BirchParams
+from .loggers import add_file_logger, get_logger, set_console_level
+from .params import BaseParams
 
 
 class WoodMicrostructure(ABC):
@@ -22,20 +23,65 @@ class WoodMicrostructure(ABC):
     @abstractmethod
     def local_distortion_cutoff(self) -> int:
         """Local distortion cutoff value"""
+
+    @property
+    @abstractmethod
+    def ray_height_mod(self) -> int:
+        """Ray height modification value used for ray cell distribution"""
+
+    @property
+    @abstractmethod
+    def save_prefix(self) -> int:
+        """Prefix for saving files"""
+
+    @property
+    @abstractmethod
+    def skip_cell_thick_rescale(self) -> int:
+        """Rescale of ellipse point for fitting"""
+
+    @abstractmethod
+    def get_distortion_map(self) -> tuple[npt.NDArray, npt.NDArray]:
+        """Get initial distortion map"""
         pass
 
-    def __init__(self, params: RayCellParams, outdir: str = None):
-        self._root_dir = None
-        self.dir_cnt = 0
+    @abstractmethod
+    def get_grid_all(
+        self, thick_all_valid_sub: npt.NDArray
+    ) -> tuple[npt.NDArray, npt.NDArray, npt.NDArray, npt.NDArray]:
+        """Get the location of grid nodes and the thickness (with random disturbance)"""
+        pass
 
+    @abstractmethod
+    def generate_vessel_indexes(self, ray_cell_x_ind_all: npt.NDArray = None) -> npt.NDArray:
+        """Generate the vessel indexes"""
+        pass
+
+    @abstractmethod
+    def get_indx_skip_all(self, indx_vessel: npt.NDArray) -> npt.NDArray:
+        """Get the indexes of the vessels to be skipped"""
+        pass
+
+    @abstractmethod
+    def get_indx_ves_edges(self, indx_vessel: npt.NDArray) -> npt.NDArray:
+        """Get the indexes of the vessels edges for ellipse fitting"""
+        pass
+
+    @abstractmethod
+    def get_indx_vessel_cen(self, indx_vessel: npt.NDArray) -> npt.NDArray:
+        """Get the indexes of the vessel centers"""
+        pass
+
+    def __init__(self, params: BaseParams, outdir: str = None):
         self.params = params
 
         self.x_grid_all = None
         self.y_grid_all = None
-        self.thickness_all = None
+        self.thickness_all_ray = None
+        self.thickness_all_fiber = None
 
         self.outdir = outdir or os.getenv('ROOT_DIR', '.')
 
+        self.get_root_dir()
         log_file = os.path.join(self.root_dir, 'wood_microstructure.log')
         self.logger = get_logger()
         add_file_logger(self.logger, log_file)
@@ -43,108 +89,29 @@ class WoodMicrostructure(ABC):
         save_param_file = os.path.join(self.root_dir, 'params.json')
         self.params.to_json(save_param_file)
 
-    def get_ldist_grid(self, x_center: int, y_center: int):
-        """Get the X,Y grids centered on (x_center, y_center) with cutoff of `local_distortion_cutoff`"""
-        sie_x, sie_y, _ = self.params.size_im_enlarge
-        return get_distortion_grid(x_center, y_center, sie_x, sie_y, self.local_distortion_cutoff)
+    def set_console_level(self, level: int):
+        """Set the console logging level"""
+        set_console_level(self.logger, level)
 
-    def get_grid_all(self):
-        """Specify the location of grid nodes and the thickness (with disturbance)"""
-        gx, gy = self.params.x_grid.shape
-        gz = self.params.size_im_enlarge[2]
-        ds = self.params.slice_interest_space
-
-        slice_interest = np.arange(0, gz, ds)
-        l = len(slice_interest)
-
-        x_grid_interp = np.random.rand(gx, gy, l) * 3 - 1.5 + self.params.x_grid[..., np.newaxis]
-        y_grid_interp = np.random.rand(gx, gy, l) * 3 - 1.5 + self.params.y_grid[..., np.newaxis]
-        thickness_interp = np.random.rand(gx, gy, l) + self.params.cell_wall_thick - 0.5
-
-        interp_z = np.arange(gz)
-        x_grid_all = np.empty((gx, gy, gz))
-        y_grid_all = np.empty_like(x_grid_all)
-        thickness_all = np.empty_like(x_grid_all)
-        for i in range(gx):
-            for j in range(gy):
-                x_grid_all[i, j, :] = CubicSpline(slice_interest, x_grid_interp[i, j, :])(interp_z)
-                y_grid_all[i, j, :] = CubicSpline(slice_interest, y_grid_interp[i, j, :])(interp_z)
-                thickness_all[i, j, :] = CubicSpline(slice_interest, thickness_interp[i, j, :])(interp_z)
-
-        self.x_grid_all = x_grid_all
-        self.y_grid_all = y_grid_all
-        self.thickness_all = thickness_all
-
-        return x_grid_all, y_grid_all, thickness_all
-
-    def get_ray_cell_indexes(self) -> npt.NDArray:
-        """Get ray cell indexes"""
-        ray_cell_x_ind_all = np.empty((1, 0))
-        if self.params.is_exist_ray_cell:
-            ray_cell_linspace = np.arange(9, len(self.params.y_vector) - 10, self.params.ray_space)
-            ray_cell_x_ind_all = ray_cell_linspace + np.random.rand(len(ray_cell_linspace)) * 10 - 5
-            ray_cell_x_ind_all = np.floor(ray_cell_x_ind_all / 2) * 2
-
-        return ray_cell_x_ind_all.astype(int)
-
-    @Clock('vessels')
-    def get_vessels_all(self, ray_cell_x_ind_all: npt.NDArray = None):
-        """Get vessels"""
-        self.logger.info('=' * 80)
-        self.logger.info('Generating vessels...')
-        if not self.params.is_exist_vessel:
-            return np.empty((0, 2), dtype=int)
-        lx = len(self.params.x_vector)
-        ly = len(self.params.y_vector)
-
-
-        vessel_all = v.generate_indexes(self.params.vessel_count, lx, ly)
-        self.logger.debug('  -- Vessel filter close --')
-        vessel_all = v.filter_close(vessel_all)
-        self.logger.debug('  -- Vessel filter ray close --')
-        vessel_all = v.filter_ray_close(vessel_all, ray_cell_x_ind_all)
-        self.logger.debug('  -- Vessel extend --')
-        vessel_all = v.extend(vessel_all, lx, ly)
-        # vessel_all = self.vessel_filter_close(vessel_all)
-        self.logger.debug('  -- Vessel filter ray close --')
-        vessel_all = v.filter_ray_close(vessel_all, ray_cell_x_ind_all)
-        self.logger.debug('  -- Vessel filter edge --')
-        vessel_all = v.filter_edge(vessel_all, lx, ly)
-
-        return vessel_all.astype(int)
-
-    def fiber_filter_in_vessel(self, vessel_all: npt.NDArray):
-        """This function is used to remove the fibers in the vessels"""
-        num_vess = vessel_all.shape[0]  # (num_vess, 2)
-
-        indx_skip_all = np.empty((num_vess, 6, 2), dtype=int)
-        indx_skip_all[:, :, :] = vessel_all[:, np.newaxis, :]
-        indx_skip_all += [
-            (-1, -2),
-            (+1, -2),
-            (-2, +0),
-            (+2, +0),
-            (-1, +2),
-            (+1, +2)
-        ]
-
-        indx_vessel = np.empty((num_vess, 6, 2))
-        indx_vessel[:, :, :] = vessel_all[:, np.newaxis, :]
-        indx_vessel += [
-            (-3, -1),
-            (-3, +1),
-            (+0, -3),
-            (+0, +3),
-            (+3, -1),
-            (+3, +1)
-        ]
-
-        return indx_skip_all.astype(int), indx_vessel.astype(int), vessel_all.astype(int)
+    def get_root_dir(self) -> str:
+        """Get the root directory for saving files"""
+        dir_cnt = 0
+        while os.path.exists(os.path.join(self.outdir, f'{self.save_prefix}_{dir_cnt}')):
+            dir_cnt += 1
+        while True:
+            try:
+                dir_path = os.path.join(self.outdir, f'{self.save_prefix}_{dir_cnt}')
+                os.makedirs(dir_path)
+            except FileExistsError:
+                dir_cnt += 1
+                continue
+            else:
+                self.root_dir = dir_path
+                break
 
     def distrbute_ray_cells(self, ray_cell_x_ind_all: npt.NDArray) -> tuple[
             npt.NDArray,
             list[npt.NDArray],
-            npt.NDArray,
             npt.NDArray
         ]:
         """Distribute the ray cells across the volume
@@ -153,53 +120,151 @@ class WoodMicrostructure(ABC):
             ray_cell_x_ind_all (npt.NDArray): Ray cell  indices
 
         Returns:
-            tuple[ npt.NDArray, list[npt.NDArray], npt.NDArray, npt.NDArray ]:
-            - Ray cell indices (num_ray_cells, 2): indices array A where A[j][1] = A[j][0] + 1
-            - Ray cell widths (num_ray_cells, non_uniform): length of elements depends on the randomly generated group
-            - Keep indices (num_ray_cells,): Index of idx in ray_cell_x_ind_all
+            tuple[npt.NDArray, list[npt.NDArray]]:
             - Ray cell indices (num_ray_cells,): Array of indices of the ray cells (without the +1 column)
+            - Ray cell widths (num_ray_cells, non_uniform): length of elements depends on the randomly generated group
         """
         self.logger.info('=' * 80)
         self.logger.info('Distributing ray cells...')
-        x_ind = []
-        width = []
-        # keep = []
-        x_ind_all_update = []
 
         sie_z = self.params.size_im_enlarge[2]
-
         ray_cell_num = self.params.ray_cell_num
         ray_cell_num_std = self.params.ray_cell_num_std
         ray_height = self.params.ray_height
 
-        m = int(np.ceil(sie_z / ray_cell_num / ray_height + 6))
-        for i, idx in enumerate(ray_cell_x_ind_all):
-            app = [0]
-            ray_cell_space = np.round(16 * np.random.rand(m)) + 6
-            rnd = np.round(-30 * np.random.rand())
-            ray_idx = [idx, idx + 1]
-            for rs in ray_cell_space:
-                group = np.random.randn() * ray_cell_num_std + ray_cell_num
-                group = np.clip(group, 5, 25)
-                app = app[-1] + (np.arange(group + 1) + rs + rnd) * ray_height
-                rnd = 0
-
-                if app[0] > sie_z - 150:
-                    break
-
-                if app[-1] >= 150:
-                    x_ind.append(ray_idx)
-                    x_ind_all_update.append(idx)
-                    width.append(np.round(app).astype(int))
-                    # keep.append(i)
-
-        return (
-            np.array(x_ind, dtype=int),
-            width,
-            # np.array(width, dtype=float),
-            # np.array(keep, dtype=int),
-            np.array(x_ind_all_update, dtype=int)
+        return rcl.distribute(
+            sie_z, ray_cell_x_ind_all, ray_cell_num, ray_cell_num_std, ray_height,
+            height_mod = self.ray_height_mod,
         )
+
+    @abstractmethod
+    def _get_small_fiber_exp(self, is_close_to_ray: npt.NDArray) -> npt.NDArray:
+        """Get the exponent for small fiber generation"""
+        pass
+
+    @Clock('small_fibers')
+    def generate_small_fibers(
+            self,
+            ray_cell_idx: npt.NDArray,
+            indx_skip_all: npt.NDArray,
+            input_volume: npt.NDArray
+        ) -> npt.NDArray:
+        """Generate small fibers. This is a modified version of the original function.
+        It runs in similar time but could be parallelized on the Z-slices and can compute only the
+        required slices.
+
+        Args:
+            ray_cell_idx (npt.NDArray): indexes of columns where not to generate fibers
+            indx_skip_all (npt.NDArray): indexes of grid where not to generate fibers
+            input_volume (npt.NDArray): input 3D gray-scale image volume to modify
+
+        Returns:
+            npt.NDArray: modified 3D gray-scale image volume with small fibers
+        """
+        self.logger.info('=' * 80)
+        self.logger.info('Generating small fibers...')
+        vol_img_ref = np.copy(input_volume)
+
+        neigh_loc = self.params.neighbor_local
+        ray_cell_idx = np.unique(ray_cell_idx // 2)
+
+        sie_x, sie_y, _ = self.params.size_im_enlarge
+        gx, gy = self.params.x_grid.shape
+
+        x_grid_all = self.x_grid_all
+        y_grid_all = self.y_grid_all
+        thick_all = self.thickness_all_fiber
+
+        lx = (gx - 2) // 2
+        ly = (gy - 2) // 2
+
+        overflow_mask = np.zeros((lx, ly), dtype=bool)
+        overflow_mask[:, ray_cell_idx] = True
+        for ix, iy in indx_skip_all.reshape(-1, 2):
+            if iy % 2 == 0:
+                continue
+            if (iy + 1) % 4 == 0:
+                ix -= 1
+            if ix % 2 == 0:
+                continue
+            overflow_mask[ix // 2, iy // 2] = True
+
+        point_coords = np.empty((lx, ly, 4, 2))
+        t_all = np.empty((lx, ly))
+
+        is_close_to_ray = np.zeros_like(t_all, dtype=bool)
+        if ray_cell_idx.size:
+            for j in range(1, ly - 1, 2):
+                mm = min(np.min(np.abs(j - ray_cell_idx)), np.min(np.abs(j - ray_cell_idx - 1)))
+                is_close_to_ray[:, j // 2] = mm <= 4
+        exp_ellipse_2 = self._get_small_fiber_exp(is_close_to_ray)
+
+        skip_cell_thick = 0  # TODO: Should this be a settable parameter?
+        # for i_slice in range(sie_z):
+        num_slices = len(self.params.save_slice)
+        for slice_idx,i_slice in enumerate(self.params.save_slice):
+            self.logger.debug('  Small fibers: idx=%d  %d/%d', i_slice, slice_idx + 1, num_slices)
+            x_slice = x_grid_all[:,:, i_slice]
+            y_slice = y_grid_all[:,:, i_slice]
+            t_slice = thick_all[:,:, i_slice]
+
+            # Assignments are split into [:, 0::2] and [1::2, :] to keep into account staggering along x direction
+            # every other row
+            t_all[:, 0::2] = t_slice[1:-2:2, 1:-2:4]
+            t_all[:, 1::2] = t_slice[2:-1:2, 3:-2:4]
+
+            # Apply the same as above but for a generalized list of neighboring locations to get the points to fit
+            # the ellipses with a shape of (lx, ly, 4, 2) ~ (GRID_X_IDX, GRID_Y_IDX, NEIGHBOR_IDX, X/Y)
+            for i,(dx,dy) in enumerate(neigh_loc.T):
+                slice_1_1 = slice(1+dx, -2+dx, 2)
+                slice_2_1 = slice(2+dx, (-1+dx) or None, 2)
+                slice_1_2 = slice(1+dy, -2+dy, 4)
+                slice_2_2 = slice(3+dy, -2+dy, 4)
+                for j,s in enumerate((x_slice, y_slice)):
+                    point_coords[:, 0::2, i,j] = s[slice_1_1, slice_1_2]
+                    point_coords[:, 1::2, i,j] = s[slice_2_1, slice_2_2]
+
+            if skip_cell_thick == 0:
+                point_coords[:,:, 1, 1] -= self.skip_cell_thick_rescale
+                point_coords[:,:, 3, 1] += self.skip_cell_thick_rescale
+
+            r1, r2, h, k = fit_elipse(point_coords)  # Estimate the coefficients of the ellipse. (lx, ly, 4)
+
+            # Skip ellipse generation based on mask:
+            # - fiber inside ray cell
+            # - fiber inside a vessel
+            h[overflow_mask] = None
+            # Skip ellipse generation if fiber has ended along the Z axis
+            h[self.get_fiber_end_condition(lx, ly, i_slice)] = None
+
+            # The alternative is to write the full x/y grid and denote it into sub-domains based on the closest h/k
+            # center and than use griddata to get the value of r1/r2/h/k on the full grid but this is slower
+            for thick, _r1, _r2, _h, _k, exp in zip(
+                t_all.flatten(), r1.flatten(), r2.flatten(), h.flatten(), k.flatten(), exp_ellipse_2.flatten()
+            ):
+                if _h is None:
+                    # Skip ellipse generation
+                    continue
+                if np.any(np.isnan([_h, _k, _r1, _r2])):
+                    self.logger.debug('NaN in ellipse parameters: h=%.1f k=%.1ff r1=%.1f r2=%.1f', _h, _k, _r1, _r2)
+                    continue
+                mr = np.floor(max(_r1, _r2))
+
+                min_x = max(0, int(np.ceil(_h)) - mr)
+                max_x = min(sie_x, int(np.ceil(_h)) + mr)
+                min_y = max(0, int(np.ceil(_k)) - mr)
+                max_y = min(sie_y, int(np.ceil(_k)) + mr)
+                if min_x >= max_x or min_y >= max_y:
+                    continue
+                rx_grid, ry_grid = np.mgrid[min_x:max_x, min_y:max_y].astype(int)
+                in_elipse_2 = (
+                    np.abs(rx_grid - _h)**exp / np.abs(_r1 - thick - skip_cell_thick)**exp +
+                    np.abs(ry_grid - _k)**exp / np.abs(_r2 - thick - skip_cell_thick)**exp
+                )
+
+                vol_img_ref[rx_grid, ry_grid, i_slice] /= 1 + np.exp(-(in_elipse_2 - 1) * 20)
+
+        return vol_img_ref.astype(int)
 
     def get_fiber_end_condition(self, lx: int, ly: int, i_slice: int) -> npt.NDArray:
         """Get a condition for skipping fiber generation due to fiber ending"""
@@ -230,124 +295,6 @@ class WoodMicrostructure(ABC):
 
         return fiber_end_cond
 
-    @Clock('small_fibers')
-    def generate_small_fibers(
-            self,
-            skip_fiber_column: npt.NDArray,
-            indx_skip_all: npt.NDArray,
-            input_volume: npt.NDArray
-        ) -> npt.NDArray:
-        """Generate small fibers. This is a modified version of the original function.
-        It runs in similar time but could be parallelized on the Z-slices and can compute only the
-        required slices.
-
-        Args:
-            skip_fiber_column (npt.NDArray): indexes of columns where not to generate fibers
-            indx_skip_all (npt.NDArray): indexes of grid where not to generate fibers
-            input_volume (npt.NDArray): input 3D gray-scale image volume to modify
-
-        Returns:
-            npt.NDArray: modified 3D gray-scale image volume with small fibers
-        """
-        self.logger.info('=' * 80)
-        self.logger.info('Generating small fibers...')
-        vol_img_ref = np.copy(input_volume)
-
-        neigh_loc = self.params.neighbor_local
-        skip_fiber_column = np.array(skip_fiber_column).flatten().astype(int)
-        skip_fiber_column = np.unique((skip_fiber_column[(skip_fiber_column % 2) == 1]) // 2)
-
-        sie_x, sie_y, _ = self.params.size_im_enlarge
-        gx, gy = self.params.x_grid.shape
-
-        x_grid_all = self.x_grid_all
-        y_grid_all = self.y_grid_all
-        thick_all = self.thickness_all
-
-        lx = (gx - 2) // 2
-        ly = (gy - 2) // 2
-
-        # skip_idx = []
-        # for ix, iy in indx_skip_all.reshape(-1, 2):
-        #     if iy % 2 == 0:
-        #         continue
-        #     if (iy + 1) % 4 == 0:
-        #         ix -= 1
-        #     if ix % 2 == 0:
-        #         continue
-        #     skip_idx.append((ix // 2, iy // 2))
-        # skip_idx = np.array(skip_idx)
-        # print('  skip_idx:', indx_skip_all.shape, skip_fiber_column.shape)
-        # print('  skip_idx:', indx_skip_all)
-
-        point_coords = np.empty((lx, ly, 4, 2))
-        t_all = np.empty((lx, ly))
-        skip_cell_thick = 0  # TODO: Should this be a settable parameter?
-        # for i_slice in range(sie_z):
-        for i_slice in self.params.save_slice:
-            self.logger.debug('  Small fibers: %d/%s', i_slice, self.params.save_slice)
-            x_slice = x_grid_all[:,:, i_slice]
-            y_slice = y_grid_all[:,:, i_slice]
-            t_slice = thick_all[:,:, i_slice]
-
-            # Assignments are split into [:, 0::2] and [1::2, :] to keep into account staggering along x direction
-            # every other row
-            t_all[:, 0::2] = t_slice[1:-2:2, 1:-2:4]
-            t_all[:, 1::2] = t_slice[2:-1:2, 3:-2:4]
-
-            for i,(dx,dy) in enumerate(neigh_loc.T):
-                slice_1_1 = slice(1+dx, -2+dx, 2)
-                slice_2_1 = slice(2+dx, (-1+dx) or None, 2)
-                slice_1_2 = slice(1+dy, -2+dy, 4)
-                slice_2_2 = slice(3+dy, -2+dy, 4)
-                for j,s in enumerate((x_slice, y_slice)):
-                    point_coords[:, 0::2, i,j] = s[slice_1_1, slice_1_2]
-                    point_coords[:, 1::2, i,j] = s[slice_2_1, slice_2_2]
-
-            if skip_cell_thick == 0:
-                point_coords[:,:, 1, 1] -= 2
-                point_coords[:,:, 3, 1] += 2
-
-            r1, r2, h, k = fit_elipse(point_coords)  # Estimate the coefficients of the ellipse. (lx, ly, 4)
-
-            # Set a very high value for h in nodes that should be ignored
-            h[:, skip_fiber_column] = 80000
-            # if len(skip_idx) > 0:
-            #     h[skip_idx[:, 0], skip_idx[:, 1]] = 80000
-            for ix, iy in indx_skip_all.reshape(-1, 2):
-                if iy % 2 == 0:
-                    continue
-                if (iy + 1) % 4 == 0:
-                    ix -= 1
-                if ix % 2 == 0:
-                    continue
-                # print(' Skipping:', i_slice, ix // 2, iy // 2)
-                h[ix // 2, iy // 2] = 80000
-            h[self.get_fiber_end_condition(lx, ly, i_slice)] = 80000
-
-            # The alternative is to write the full x/y grid and denote it into sub-domains based on the closest h/k
-            # center and than use griddata to get the value of r1/r2/h/k on the full grid but this is slower
-            for thick, _r1, _r2, _h, _k in zip(t_all.flatten(), r1.flatten(), r2.flatten(), h.flatten(), k.flatten()):
-                if np.any(np.isnan([_h, _k, _r1, _r2])):
-                    continue
-                mr = np.floor(max(_r1, _r2))
-
-                min_x = max(0, int(np.ceil(_h)) - mr)
-                max_x = min(sie_x, int(np.ceil(_h)) + mr)
-                min_y = max(0, int(np.ceil(_k)) - mr)
-                max_y = min(sie_y, int(np.ceil(_k)) + mr)
-                if min_x >= max_x or min_y >= max_y:
-                    continue
-                rx_grid, ry_grid = np.mgrid[min_x:max_x, min_y:max_y].astype(int)
-                in_elipse_2 = (
-                    (rx_grid - _h)**2 / (_r1 - thick - skip_cell_thick)**2 +
-                    (ry_grid - _k)**2 / (_r2 - thick - skip_cell_thick)**2
-                )
-
-                vol_img_ref[rx_grid, ry_grid, i_slice] /= 1 + np.exp(-(in_elipse_2 - 1) * 20)
-
-        return vol_img_ref.astype(int)
-
     @Clock('large_fibers')
     def generate_large_fibers(
             self,
@@ -366,10 +313,10 @@ class WoodMicrostructure(ABC):
         x_vector = self.params.x_vector
         y_vector = self.params.y_vector
 
-        sie_x, sie_y, sie_z = self.params.size_im_enlarge
+        sie_x, sie_y, _ = self.params.size_im_enlarge
 
         # vessel_length = self.params.vessel_length
-        vessel_thicker = 1  # TODO: Should this be a settable parameter?
+        vessel_thicker = self.params.vessel_thicker
         # vessel_length_variance = self.params.vessel_length_variance
         # cell_end_thick = self.params.cell_end_thick
 
@@ -419,7 +366,7 @@ class WoodMicrostructure(ABC):
                     ))
                     r1, r2, h, k = fit_ellipse_6pt(point_coord)  # Estimate the coefficients of the ellipse.
 
-                    thick = self.thickness_all[i1, j, i_slice] + vessel_thicker
+                    thick = self.thickness_all_fiber[i1, j, i_slice] + vessel_thicker
                     mr = np.floor(max(r1, r2))
 
                     x_grid, y_grid = np.mgrid[
@@ -441,7 +388,7 @@ class WoodMicrostructure(ABC):
         return vol_img_ref
 
     def get_vessel_end_loc(self, shape = None):
-
+        """Generate the vessel end location"""
         if shape is None:
             shape = tuple()
         elif isinstance(shape, int):
@@ -462,24 +409,41 @@ class WoodMicrostructure(ABC):
             tmp[tmp < rcl_d3] = rcl_t2
             tmp[tmp > rcl_t2] = rcl_t2
             vessel_end_loc = np.concatenate((vessel_end_loc, vessel_end_loc[..., -1:] + tmp), axis=-1)
-            # print('vessel_end_loc:', vessel_end_loc.shape, np.min(vessel_end_loc[..., -1]))
         vessel_end_loc = np.round(vessel_end_loc)
-        # vessel_end_loc[vessel_end_loc > sie_x + ray_cell_length / 2] = np.nan
-
-        # vessel_end_loc = vessel_end_loc[vessel_end_loc <= sie_x + ray_cell_length / 2]
 
         return vessel_end_loc.astype(int)
 
+    @abstractmethod
+    def _generate_raycell_cell_r(self, interp1: npt.NDArray, interp2: npt.NDArray, dx: npt.NDArray, k: int):
+        """Get the value of `cell_r` for `generate_raycell`"""
+        pass
+
+    @abstractmethod
+    def _generate_raycell_valid_idx(
+            self, vel_col_r: npt.NDArray, vel_col_r1: npt.NDArray, flag: int, cet: int
+        ) -> npt.NDArray:
+        """Get the value of `valid_idx` for `generate_raycell`
+
+        Args:
+            vel_col_r (npt.NDArray): First column of the ray cell
+            vel_col_r1 (npt.NDArray): Second column of the ray cell
+            flag (int): -1/+1 if first/last ray cell, 0 otherwise
+            cet (int): Cell end thickness
+        """
+        pass
+
     @Clock('ray_cell')
     def generate_raycell(
-            self, ray_idx: tuple[int, int], ray_width: npt.NDArray, input_volume: npt.NDArray
+            self, ray_idx: int, ray_width: npt.NDArray, input_volume: npt.NDArray,
+            thickness_all: npt.NDArray
         ) -> npt.NDArray:
         """Generate ray cell
 
         Args:
-            ray_idx (tuple[int, int]): Tuple of (idx, idx+1) where idx is the y-index of the ray cell
+            ray_idx (int): y-index of the ray cell
             ray_width (npt.NDArray): Ray cell width
             input_volume (npt.NDArray): Input 3D gray-scale image volume to modify
+            thickness_all (npt.NDArray): Thickness of the ray cells
 
         Returns:
             npt.NDArray: Modified 3D gray-scale image volume with ray cells
@@ -495,22 +459,17 @@ class WoodMicrostructure(ABC):
         rcl_d2_r = np.round(ray_cell_length / 2)
 
         sie_x, _, sie_z = self.params.size_im_enlarge
-        # gx, gy = self.params.x_grid.shape
 
         x_grid_all = self.x_grid_all
         y_grid_all = self.y_grid_all
-        thick_all = self.thickness_all
 
         cell_end_thick = self.params.cell_end_thick
-        cet_d2_p1 = cell_end_thick // 2 + 1
-        cet_d2_m1 = cell_end_thick // 2 - 1
 
-        ray_idx = np.array(ray_idx).flatten().astype(int)
-        ray_width = np.array(ray_width).flatten().astype(int)
+        ray_width = np.array(ray_width).astype(int)
 
         dx = np.arange(sie_x)
 
-        vessel_end_loc = self.get_vessel_end_loc(len(ray_idx))
+        vessel_end_loc = self.get_vessel_end_loc(2)
 
         ray_column_rand = int(np.round(1 / 2 * ray_height))
 
@@ -520,15 +479,11 @@ class WoodMicrostructure(ABC):
             k1 = j_slice + ray_column_rand
             tmp0_1 = (max(1, k0) + min(k0 + ray_height, sie_z)) / 2
             tmp1_1 = (max(1, k1) + min(k1 + ray_height, sie_z)) / 2
-            # tmp_1 = (np.max((1, k)) + np.min((k + ray_height, sie_z))) / 2
 
             t0 = int(np.round(tmp0_1)) - 1  # 0-indexed
             t1 = int(np.round(tmp1_1)) - 1
 
-            for i, column_idx in enumerate(ray_idx):
-                # self.logger.debug('Ray cell: %d %s', column_idx, ray_idx)
-                # vessel_end_loc = self.get_vessel_end_loc().reshape(-1)
-
+            for i, column_idx in enumerate([ray_idx, ray_idx + 1]):
                 if column_idx % 2:
                     t, k, tmp_1 = t1, k1, tmp1_1
                 else:
@@ -539,17 +494,14 @@ class WoodMicrostructure(ABC):
                 if t not in self.params.save_slice:
                     continue
 
-
                 vel = vessel_end_loc[i]
                 vel = vel[vel <= sie_x + rcl_d2]
-
-                # rand = ray_column_rand * ((column_idx + 1) % 2)
 
                 interp_x0 = x_grid_all[:, column_idx, t]
                 interp_y0 = y_grid_all[:, column_idx, t]
                 interp_x1 = x_grid_all[:, column_idx + 1, t]
                 interp_y1 = y_grid_all[:, column_idx + 1, t]
-                interp_thick = thick_all[:, column_idx, t]
+                interp_thick = thickness_all[:, column_idx, t]
                 tmp_2 = rcl_d2_r if m2 % 2 else 0
 
                 try:
@@ -570,14 +522,11 @@ class WoodMicrostructure(ABC):
                     np.round((y_interp2_c + y_interp1_c)) / 2,
                     np.full(dx.shape, tmp_1)
                 ))
-                cell_r = np.column_stack((
-                    (y_interp2_c - y_interp1_c) / 2,
-                    np.full(dx.shape, (np.min((k + ray_height, sie_z)) - np.max((1, k))) / 2)
-                )) + 0.5
+                cell_r = self._generate_raycell_cell_r(y_interp1_c, y_interp2_c, dx, k)
 
-                d_col = int(cell_end_thick)
-                for vel_r, vel_r1 in zip(vel[:-1], vel[1:]):
-                    # tmp_2 = rcl_d2_r if m2 % 2 else 0
+                flag = -1
+                check = len(vel) - 2
+                for cnt,(vel_r, vel_r1) in enumerate(zip(vel[:-1], vel[1:])):
                     vel_col_r = int(vel_r + tmp_2)
                     if vel_col_r < 1:
                         continue
@@ -590,14 +539,12 @@ class WoodMicrostructure(ABC):
                         [np.max((0, k)), np.min((k + ray_height, sie_x))]
                     ])
 
-                    valid_idx = np.arange(
-                        vel_col_r + d_col,
-                        vel_col_r1 - cet_d2_p1  #Right inclusive
-                    )
-                    valid_idx = set(int(_) for _ in valid_idx)
-                    d_col = cet_d2_m1
+                    valid_idx = self._generate_raycell_valid_idx(vel_col_r, vel_col_r1, flag, cell_end_thick)
+                    flag = 0 if cnt < check else 1
 
                     for idx in range(vel_col_r, vel_col_r1):
+                        if idx not in valid_idx:
+                            continue
                         if j_slice == np.min(ray_width):
                             vol_img_ref_final[
                                 idx,
@@ -617,8 +564,6 @@ class WoodMicrostructure(ABC):
                                 int(cell_neigh_pt[2, 0]):int(cell_neigh_pt[2, 1])
                             ] = 255
 
-                        if idx not in valid_idx:
-                            continue
 
                         for j in range(int(cell_neigh_pt[1, 0]), int(cell_neigh_pt[1, 1]) + 1):
                             for s in range(int(cell_neigh_pt[2, 0]), int(cell_neigh_pt[2, 1]) + 1):
@@ -639,6 +584,23 @@ class WoodMicrostructure(ABC):
 
         return vol_img_ref_final
 
+    @abstractmethod
+    def _get_k_grid1(self, is_ctr: npt.NDArray, is_ctr_far: npt.NDArray, vess_cond: npt.NDArray) -> npt.NDArray:
+        """Get the k_grid of parameters for the deformation map"""
+        pass
+
+    @abstractmethod
+    def _get_k_grid2(
+        self, k_grid: npt.NDArray, is_ctr: npt.NDArray, is_ctr_far: npt.NDArray, vess_cond: npt.NDArray
+    ) -> npt.NDArray:
+        """Regenerate part of the k_grid for different random numbers between U and V computation."""
+        pass
+
+    @abstractmethod
+    def _get_sign_grid(self, vess_cond: npt.NDArray) -> npt.NDArray:
+        """Get the sign grid of parameters for accumulating the deformation map"""
+        pass
+
     @Clock('deformation')
     @Clock('deform:generate')
     def generate_deformation(self, ray_cell_idx: npt.NDArray, indx_skip_all: npt.NDArray, idx_vessel_cen: npt.NDArray):
@@ -649,13 +611,12 @@ class WoodMicrostructure(ABC):
         self.logger.debug('  ray_cell_idx: %s', ray_cell_idx.shape)
         sie_x, sie_y, _ = self.params.size_im_enlarge
 
-        lx, ly, _ = self.x_grid_all.shape
         gx, gy = self.params.x_grid.shape
 
         u = np.zeros((sie_x, sie_y), dtype=float)
         v = np.zeros_like(u, dtype=float)
-        u1 = np.zeros_like(u, dtype=float)
-        v1 = np.zeros_like(u, dtype=float)
+        # u1 = np.zeros_like(u, dtype=float)
+        # v1 = np.zeros_like(u, dtype=float)
 
         lx = (gx - 1) // 2
         ly = (gy - 1) // 2
@@ -664,6 +625,7 @@ class WoodMicrostructure(ABC):
         y_slice = self.y_grid_all[:, :, 0]
 
         skip_idx = set()
+        # indx_skip_all: (num_vessels, 6, 2)
         for ix, iy in indx_skip_all.reshape(-1, 2):
             if iy % 2 == 0:
                 continue
@@ -690,74 +652,63 @@ class WoodMicrostructure(ABC):
             if yc % 2 == 0:
                 continue
             if (yc + 1) % 4 == 0:
-                xc += 1
+                xc -= 1
             if xc % 2 == 0:
                 continue
             cond[xc // 2, yc // 2] = True
 
         if ray_cell_idx.size:
             for j in range(1, ly - 1, 2):
-                mm = np.min(abs(j - ray_cell_idx))
+                mm = min(np.min(np.abs(j - ray_cell_idx)), np.min(np.abs(j - ray_cell_idx - 1)))
                 is_close_to_ray[:, j // 2] = mm <= 4
                 is_close_to_ray_far[:, j // 2] = mm <= 8
 
-        s_grid = np.sign(np.random.randn(lx, ly))
-        s_grid[cond] = -1
-        k_grid = np.empty((lx, ly, 4))
+        # s_grid = np.sign(np.random.randn(lx, ly))
+        # s_grid[cond] = -1
 
-        k_grid[..., 0] = 0.08
-        k_grid[..., 1] = 0.06
-        k_grid[..., 2] = 2
-        k_grid[..., 3] = 15
-
-        # k_grid[~cond, 0] = 0.08
-        # k_grid[~cond, 1] = 0.06
-        k_grid[~cond, 2] = 2 + np.random.rand(lx, ly)[~cond]
-        k_grid[~cond, 3] = 1 + np.random.rand(lx, ly)[~cond]
-        k_grid[~cond & is_close_to_ray, 3] *= 0.3
-
-        k_grid[cond, 0] = 0.06
-        k_grid[cond, 1] = 0.055
-        # k_grid[cond, 2] = 2
-        k_grid[cond & is_close_to_ray_far, 3] = 3 + 5 * np.random.rand(lx, ly)[cond & is_close_to_ray_far]
-        # k_grid[cond & ~is_close_to_ray_far, 3] = 15
+        s_grid = self._get_sign_grid(cond)
+        k_grid = self._get_k_grid1(is_close_to_ray, is_close_to_ray_far, cond)
 
         for xc, yc, k, s in zip(xc_grid.flatten(), yc_grid.flatten(), k_grid.reshape(-1, 4), s_grid.flatten()):
             if (xc, yc) in skip_idx:
                 continue
-            xp, yp = self.get_ldist_grid(xc, yc)
-            local_dist = local_distort(xp, yp, xc, yc, k)
+            xp, yp = dist.get_distortion_grid(xc, yc, sie_x, sie_y, self.local_distortion_cutoff)
+            local_dist = dist.local_distort(xp, yp, xc, yc, k)
+            # plt.contourf(xp, yp, local_dist, 50)
+            # plt.colorbar()
+            # plt.title(f'local_distort: {xc}, {yc}')
+            # plt.tight_layout()
+            # plt.show()
             u[xp, yp] += -s * local_dist
 
-        k_grid[~cond, 2] = 2 + np.random.rand(lx, ly)[~cond]
-        k_grid[~cond, 3] = 1 + np.random.rand(lx, ly)[~cond]
-        k_grid[~cond & is_close_to_ray, 3] *= 0.3
+        k_grid = self._get_k_grid2(k_grid, is_close_to_ray, is_close_to_ray_far, cond)
 
         for xc, yc, k, s in zip(xc_grid.flatten(), yc_grid.flatten(), k_grid.reshape(-1, 4), s_grid.flatten()):
             if (xc, yc) in skip_idx:
                 continue
-            xp, yp = self.get_ldist_grid(xc, yc)
-            local_dist = local_distort(yp, xp, yc, xc, k)
+            xp, yp = dist.get_distortion_grid(xc, yc, sie_x, sie_y, self.local_distortion_cutoff)
+            local_dist = dist.local_distort(yp, xp, yc, xc, k)
             v[xp, yp] += -s * local_dist
 
-        for xc, yc, cf in zip(xc_grid.flatten(), yc_grid.flatten(), is_close_to_ray_far.flatten()):
-            if np.random.rand() >= 0.01:
-                continue
-            k = [0.01, 0.008, 1.5 * (1 + np.random.rand()), 0.2 * (1 + np.random.rand())]
-            if not cf:
-                k[3] *= 2.5
+        # for xc, yc, cf in zip(xc_grid.flatten(), yc_grid.flatten(), is_close_to_ray_far.flatten()):
+        #     if np.random.rand() >= 0.01:
+        #         continue
+        #     k = [0.01, 0.008, 1.5 * (1 + np.random.rand()), 0.2 * (1 + np.random.rand())]
+        #     if not cf:
+        #         k[3] *= 2.5
 
-            xp, yp = self.get_ldist_grid(xc, yc)
-            if np.random.randn() > 0:
-                local_dist = local_distort(xp, yp, xc, yc, k)
-                u1[xp, yp] += np.sign(np.random.randn()) * local_dist
-                # u1 += np.sign(np.random.randn()) * local_distort(x, y, xc, yc, k)
-            else:
-                local_dist = local_distort(yp, xp, yc, xc, k)
-                v1[xp, yp] += np.sign(np.random.randn()) * local_dist
-                # v1 += np.sign(np.random.randn()) * local_distort(y, x, yc, xc, k)
+        #     xp, yp = dist.get_distortion_grid(xc, yc, sie_x, sie_y, self.local_distortion_cutoff)
+        #     if np.random.randn() > 0:
+        #         local_dist = dist.local_distort(xp, yp, xc, yc, k)
+        #         u1[xp, yp] += np.sign(np.random.randn()) * local_dist
+        #         # u1 += np.sign(np.random.randn()) * local_distort(x, y, xc, yc, k)
+        #     else:
+        #         local_dist = dist.local_distort(yp, xp, yc, xc, k)
+        #         v1[xp, yp] += np.sign(np.random.randn()) * local_dist
+        #         # v1 += np.sign(np.random.randn()) * local_distort(y, x, yc, xc, k)
 
-        return u, v, u1, v1
+        return u, v
+        # return u, v, u1, v1
 
     @Clock('deformation')
     @Clock('deform:rc_shrink')
@@ -908,23 +859,6 @@ class WoodMicrostructure(ABC):
 
         return img_interp
 
-    @property
-    def root_dir(self):
-        if self._root_dir is None:
-            while os.path.exists(os.path.join(self.outdir, f'SaveBirch_{self.dir_cnt}')):
-                self.dir_cnt += 1
-            while True:
-                try:
-                    dir_path = os.path.join(self.outdir, f'SaveBirch_{self.dir_cnt}')
-                    os.makedirs(dir_path)
-                except FileExistsError:
-                    self.dir_cnt += 1
-                    continue
-                else:
-                    self._root_dir = dir_path
-                    break
-        return self._root_dir
-
     @Clock('Disk IO')
     def create_dirs(self):
         """Ensure the output directories are created"""
@@ -946,8 +880,9 @@ class WoodMicrostructure(ABC):
     @Clock('Disk IO')
     def save_2d_img(data: npt.NDArray, filename: str):
         """Save 2D data to a TIFF file"""
+        data[np.isnan(data)] = 0
         img = Image.fromarray(data.astype(np.uint8), mode='L')
-        # img.show()
+        img.show()
         img.save(filename)
 
     @Clock('Disk IO')
@@ -958,58 +893,64 @@ class WoodMicrostructure(ABC):
         np.savetxt(u_name, np.round(u, decimals=4), delimiter=',')
         np.savetxt(v_name, np.round(v, decimals=4), delimiter=',')
 
-    def generate(self):
+    def _generate(self):
         """Generate ray cells"""
         np.random.seed(self.params.random_seed)
 
-        self.get_grid_all()
+        thick_all_valid_sub, compress_all_valid_sub = self.get_distortion_map()
+        self.logger.debug('thick_all_valid_sub.shape: %s', thick_all_valid_sub.shape)
+        self.logger.debug('compress_all_valid_sub.shape: %s', compress_all_valid_sub.shape)
 
-        self.logger.info('PARAM: size_im_enlarge: %s', self.params.size_im_enlarge)
-        self.logger.info('PARAM: x_vector.shape: %s', self.params.x_vector.shape)
-        self.logger.info('PARAM: y_vector.shape: %s', self.params.y_vector.shape)
-        self.logger.info('PARAM: x_grid_all.shape: %s', self.x_grid_all.shape)
+        self.get_grid_all(thick_all_valid_sub)
+
+        self.logger.debug('PARAM: size_im_enlarge: %s', self.params.size_im_enlarge)
+        self.logger.debug('PARAM: x_vector.shape: %s', self.params.x_vector.shape)
+        self.logger.debug('PARAM: y_vector.shape: %s', self.params.y_vector.shape)
+        self.logger.debug('PARAM: x_grid_all.shape: %s', self.x_grid_all.shape)
+        self.logger.debug('PARAM: thickness_all_ray.shape: %s', self.thickness_all_fiber.shape)
+        self.logger.debug('PARAM: thickness_all_fiber.shape: %s', self.thickness_all_fiber.shape)
 
         ray_cell_x_ind_all = self.get_ray_cell_indexes()
         self.logger.debug('ray_cell_x_ind_all.shape: %s', ray_cell_x_ind_all.shape)
         self.logger.debug('ray_cell_x_ind_all: %s', ray_cell_x_ind_all)
 
-        vessel_all = self.get_vessels_all(ray_cell_x_ind_all)
+        vessel_all = self.generate_vessel_indexes(ray_cell_x_ind_all)
         self.logger.debug('vessel_all.shape: %s', vessel_all.shape)
-        # self.logger.debug('vessel_all: %s', vessel_all)
+        self.logger.debug('vessel_all: %s', vessel_all)
 
-        indx_skip_all, indx_vessel, indx_vessel_cen = self.fiber_filter_in_vessel(vessel_all)
+        indx_skip_all = self.get_indx_skip_all(vessel_all)
+        indx_ves_edges = self.get_indx_ves_edges(vessel_all)
+        indx_vessel_cen = self.get_indx_vessel_cen(vessel_all)
         self.logger.debug('indx_skip_all: %s', indx_skip_all.shape)
-        self.logger.debug('indx_vessel: %s', indx_vessel.shape)
+        self.logger.debug('indx_vessel: %s', indx_ves_edges.shape)
         self.logger.debug('indx_vessel_cen: %s', indx_vessel_cen.shape)
 
-        ray_cell_x_ind, ray_cell_width, ray_cell_x_ind_all_update = self.distrbute_ray_cells(ray_cell_x_ind_all)
+        ray_cell_x_ind, ray_cell_width = self.distrbute_ray_cells(ray_cell_x_ind_all)
         self.logger.debug('ray_cell_x_ind: %s  %s', ray_cell_x_ind.shape, ray_cell_x_ind)
         self.logger.debug('ray_cell_width:')
-
         for i,width in enumerate(ray_cell_width):
             self.logger.debug('   %d %s', i+1, width)
-        self.logger.debug('ray_cell_x_ind_all_update: %s  %s', ray_cell_x_ind_all_update.shape, ray_cell_x_ind_all_update)
 
         vol_img_ref = np.full(self.params.size_im_enlarge, 255, dtype=float)
         vol_img_ref = self.generate_small_fibers(ray_cell_x_ind, indx_skip_all, vol_img_ref)
-        vol_img_ref = self.generate_large_fibers(indx_vessel, indx_vessel_cen, vol_img_ref)
+        vol_img_ref = self.generate_large_fibers(indx_ves_edges, indx_vessel_cen, vol_img_ref)
 
         if self.params.is_exist_ray_cell:
             for idx, width in zip(ray_cell_x_ind, ray_cell_width):
                 self.logger.debug('Generating ray cell: %s / %s', idx, width)
-                vol_img_ref = self.generate_raycell(idx, width, vol_img_ref)
+                vol_img_ref = self.generate_raycell(idx, width, vol_img_ref, self.thickness_all_ray)
 
         # Save the generated volume
-        self.create_dirs()
         self.save_slices(vol_img_ref, 'volImgBackBone')
 
-        # u1 and v1 are in a commented part of the code. Prob used in original code?
-        u, v, _, _ = self.generate_deformation(ray_cell_x_ind, indx_skip_all, indx_vessel_cen)
+        # # u1 and v1 are in a commented part of the code. Prob used in original code?
+        # u, v, _, _ = self.generate_deformation(ray_cell_x_ind, indx_skip_all, indx_vessel_cen)
+        u, v = self.generate_deformation(ray_cell_x_ind, indx_skip_all, indx_vessel_cen)
         self.logger.debug('u.shape: %s  min/max: %s %s', u.shape, u.min(), u.max())
         self.logger.debug('v.shape: %s  min/max: %s %s', v.shape, v.min(), v.max())
 
         if self.params.is_exist_ray_cell:
-            v_all_ray = self.ray_cell_shrinking(ray_cell_width, ray_cell_x_ind_all_update, v)
+            v_all_ray = self.ray_cell_shrinking(ray_cell_width, ray_cell_x_ind, v)
             v = v[..., np.newaxis] + v_all_ray
             self.logger.debug('vray   : %s  min/max: %s %s', v_all_ray.shape, v_all_ray.min(), v_all_ray.max())
             self.logger.debug('v.shape: %s  min/max: %s %s', v.shape, v.min(), v.max())
@@ -1026,6 +967,11 @@ class WoodMicrostructure(ABC):
 
             filename = os.path.join(self.root_dir, 'LocalDistVolume', f'volImgRef_{slice_idx+1:05d}.tiff')
             self.save_2d_img(img_interp, filename)
+
+    def generate(self):
+        """Generate the volume image"""
+        self.create_dirs()
+        self._generate()
 
         Clock.report_all()
         self.logger.info('======== DONE ========')

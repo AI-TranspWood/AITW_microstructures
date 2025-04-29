@@ -4,7 +4,8 @@ import multiprocessing as mp
 
 import click
 
-from .. import BirchMicrostructure, BirchParams
+from .. import SpruceMicrostructure, SpruceParams
+from ..loggers import set_console_level
 from .main import wood_microstructure
 
 verbose_map = {
@@ -15,8 +16,8 @@ verbose_map = {
 
 def run_from_dict(data: dict, output_dir: str = None, loglevel: int = logging.DEBUG):
     """Run the birch microstructure generation from a dictionary."""
-    params = BirchParams.from_dict(data)
-    ms = BirchMicrostructure(params, outdir=output_dir)
+    params = SpruceParams.from_dict(data)
+    ms = SpruceMicrostructure(params, outdir=output_dir)
     ms.set_console_level(loglevel)
     ms.generate()
 
@@ -28,8 +29,8 @@ def run_from_dict(data: dict, output_dir: str = None, loglevel: int = logging.DE
 @click.option('-v', '--verbose', help='Verbose output', count=True)
 # @click.option('--log_file', type=click.Path(), help='Log file name')
 @click.option('--max-parallel', type=int, default=1, help='Max parallel processeses')
-def birch(json_file, output_dir, verbose, max_parallel):
-    """Generate birch microstructure"""
+def spruce(json_file, output_dir, verbose, max_parallel):
+    """Generate spruce microstructure"""
     if json_file is None:
         raise ValueError('JSON file is required')
 
