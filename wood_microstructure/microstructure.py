@@ -1,4 +1,5 @@
 """Ray cells"""
+import logging
 import os
 from abc import ABC, abstractmethod
 from collections import defaultdict
@@ -19,6 +20,8 @@ from .params import BaseParams
 
 class WoodMicrostructure(Clock, ABC):
     """Base class for wood microstructure generation"""
+    ParamsClass: BaseParams = None
+
     @property
     @abstractmethod
     def local_distortion_cutoff(self) -> int:
@@ -986,3 +989,11 @@ class WoodMicrostructure(Clock, ABC):
 
         self.report()
         self.logger.info('======== DONE ========')
+
+    @classmethod
+    def run_from_dict(cls, data: dict, output_dir: str = None, loglevel: int = logging.DEBUG):
+        """Run the generator from a dictionary of parameters"""
+        params = cls.ParamsClass.from_dict(data)
+        ms = cls(params, outdir=output_dir)
+        ms.set_console_level(loglevel)
+        ms.generate()

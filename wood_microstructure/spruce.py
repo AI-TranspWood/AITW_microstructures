@@ -7,9 +7,12 @@ from . import ray_cells as rcl
 from . import vessels as ves
 from .clocks import Clock
 from .microstructure import WoodMicrostructure
+from .params import SpruceParams
 
 
 class SpruceMicrostructure(WoodMicrostructure):
+    ParamsClass = SpruceParams
+
     save_prefix = 'SaveSpruce'
     local_distortion_cutoff = 200
     ray_height_mod = 5
