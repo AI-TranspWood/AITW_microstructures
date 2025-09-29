@@ -23,7 +23,8 @@ def run_from_dict(data: dict, output_dir: str = None, loglevel: int = logging.DE
 
 
 @wood_microstructure.command()
-@click.option('--json_file', type=click.Path(exists=True), help='JSON file with parameters')
+@click.argument('json_file', required=True, type=click.Path(exists=True))
+# @click.option('--json_file', type=click.Path(exists=True), help='JSON file with parameters')
 @click.option('--output_dir', type=click.Path(), help='Output directory')
 @click.option('-v', '--verbose', help='Verbose output', count=True)
 # @click.option('--log_file', type=click.Path(), help='Log file name')

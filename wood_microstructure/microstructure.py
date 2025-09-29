@@ -17,7 +17,7 @@ from .loggers import add_file_logger, get_logger, set_console_level
 from .params import BaseParams
 
 
-class WoodMicrostructure(ABC):
+class WoodMicrostructure(Clock, ABC):
     """Base class for wood microstructure generation"""
     @property
     @abstractmethod
@@ -71,7 +71,9 @@ class WoodMicrostructure(ABC):
         """Get the indexes of the vessel centers"""
         pass
 
-    def __init__(self, params: BaseParams, outdir: str = None, show_img: bool = False):
+    def __init__(self, params: BaseParams, *args, outdir: str = None, show_img: bool = False, **kwargs):
+        super().__init__(*args, **kwargs)
+
         self.params = params
 
         self.x_grid_all = None
@@ -82,9 +84,9 @@ class WoodMicrostructure(ABC):
         self.show_img = show_img
         self.outdir = outdir or os.getenv('ROOT_DIR', '.')
 
-        self.get_root_dir()
+        num = self.get_root_dir()
         log_file = os.path.join(self.root_dir, 'wood_microstructure.log')
-        self.logger = get_logger()
+        self.logger = get_logger(str(num))
         add_file_logger(self.logger, log_file)
 
         save_param_file = os.path.join(self.root_dir, 'params.json')
@@ -94,7 +96,7 @@ class WoodMicrostructure(ABC):
         """Set the console logging level"""
         set_console_level(self.logger, level)
 
-    def get_root_dir(self) -> str:
+    def get_root_dir(self) -> int:
         """Get the root directory for saving files"""
         dir_cnt = 0
         while os.path.exists(os.path.join(self.outdir, f'{self.save_prefix}_{dir_cnt}')):
@@ -109,7 +111,10 @@ class WoodMicrostructure(ABC):
             else:
                 self.root_dir = dir_path
                 break
+        return dir_cnt
 
+    @Clock.register('ray_cell')
+    @Clock.register('rcl:distribute')
     def distrbute_ray_cells(self, ray_cell_x_ind_all: npt.NDArray) -> tuple[
             npt.NDArray,
             list[npt.NDArray],
@@ -143,7 +148,7 @@ class WoodMicrostructure(ABC):
         """Get the exponent for small fiber generation"""
         pass
 
-    @Clock('small_fibers')
+    @Clock.register('small_fibers')
     def generate_small_fibers(
             self,
             ray_cell_idx: npt.NDArray,
@@ -296,7 +301,7 @@ class WoodMicrostructure(ABC):
 
         return fiber_end_cond
 
-    @Clock('large_fibers')
+    @Clock.register('large_fibers')
     def generate_large_fibers(
             self,
             indx_vessel: npt.NDArray,
@@ -433,7 +438,7 @@ class WoodMicrostructure(ABC):
         """
         pass
 
-    @Clock('ray_cell')
+    @Clock.register('ray_cell')
     def generate_raycell(
             self, ray_idx: int, ray_width: npt.NDArray, input_volume: npt.NDArray,
             thickness_all: npt.NDArray
@@ -600,8 +605,8 @@ class WoodMicrostructure(ABC):
         """Get the sign grid of parameters for accumulating the deformation map"""
         pass
 
-    @Clock('deformation')
-    @Clock('deform:generate')
+    @Clock.register('deformation')
+    @Clock.register('deform:generate')
     def generate_deformation(self, ray_cell_idx: npt.NDArray, indx_skip_all: npt.NDArray, idx_vessel_cen: npt.NDArray):
         """Add complicated deformation to the volume image. The deformation fields are generated separately.
         Then, they are summed together. Here u, v are initialized to be zero. Then they are summed."""
@@ -709,8 +714,8 @@ class WoodMicrostructure(ABC):
         return u, v
         # return u, v, u1, v1
 
-    @Clock('deformation')
-    @Clock('deform:rc_shrink')
+    @Clock.register('deformation')
+    @Clock.register('deform:rc_shrink')
     def ray_cell_shrinking(self, width: npt.NDArray, idx_all: npt.NDArray, dist_v: npt.NDArray) -> npt.NDArray:
         """Shrink the ray cell width"""
         self.logger.info('=' * 80)
@@ -835,8 +840,8 @@ class WoodMicrostructure(ABC):
 
         return v_all
 
-    @Clock('deformation')
-    @Clock('deform:apply')
+    @Clock.register('deformation')
+    @Clock.register('deform:apply')
     def apply_deformation(self, slice_ref: npt.NDArray, u: npt.NDArray, v: npt.NDArray) -> npt.NDArray:
         """Apply the deformation to the volume image"""
         self.logger.info('=' * 80)
@@ -858,7 +863,7 @@ class WoodMicrostructure(ABC):
 
         return img_interp
 
-    @Clock('Disk IO')
+    @Clock.register('Disk IO')
     def create_dirs(self):
         """Ensure the output directories are created"""
         for dir_name in ['volImgBackBone', 'LocalDistVolume', 'LocalDistVolumeDispU', 'LocalDistVolumeDispV']:
@@ -876,7 +881,7 @@ class WoodMicrostructure(ABC):
             self.save_2d_img(vol_img_ref[:, :, i], filename, self.show_img)
 
     @staticmethod
-    @Clock('Disk IO')
+    @Clock.register('Disk IO')
     def save_2d_img(data: npt.NDArray, filename: str, show: bool = False):
         """Save 2D data to a TIFF file"""
         data[np.isnan(data)] = 255
@@ -885,7 +890,7 @@ class WoodMicrostructure(ABC):
             img.show()
         img.save(filename)
 
-    @Clock('Disk IO')
+    @Clock.register('Disk IO')
     def save_distortion(self, u: npt.NDArray, v: npt.NDArray, slice_idx: int):
         """Save the distortion fields"""
         u_name = os.path.join(self.root_dir, 'LocalDistVolumeDispU', f'u_volImgRef_{slice_idx+1:05d}.csv')
@@ -970,10 +975,27 @@ class WoodMicrostructure(ABC):
             filename = os.path.join(self.root_dir, 'LocalDistVolume', f'volImgRef_{slice_idx+1:05d}.tiff')
             self.save_2d_img(img_interp, filename, self.show_img)
 
+    def report(self):
+        """Final report for the generation"""
+        # msg = f'{self.name:>20s}   ({num_calls:>7d} CALLs): {tot_time:>13.4f} s  ({avg_time:>10.1f} ms/CALL)'
+        # res = ['Time report:']
+        # for clock, dct in self.clocks.items():
+        #     num_calls = dct['num_calls']
+        #     tot_time = dct['tot_time']
+        #     avg_time = (tot_time / num_calls * 1000) if num_calls else 0
+        #     msg = f'{clock:>20s}   ({num_calls:>7d} CALLs): {tot_time:>13.4f} s  ({avg_time:>10.1f} ms/CALL)'
+        #     res.append(msg)
+
+        # self.logger.info('\n'.join(res))
+        self.logger.info(self.report_clocks())
+
     def generate(self):
         """Generate the volume image"""
         self.create_dirs()
         self._generate()
 
-        Clock.report_all()
+        # time_reports = Clock.report_all()
+        # self.logger.info(f'Time report:\n{time_reports}')
+        # self.logger.info(f'Time report:\n{str(self.clocks)}')
+        self.report()
         self.logger.info('======== DONE ========')

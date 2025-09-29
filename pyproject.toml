@@ -25,6 +25,7 @@ dependencies = [
     "scipy",
     "pillow",
     "click",
+    "rich",
 ]
 
 # [project.urls]

@@ -49,6 +49,7 @@ class BirchMicrostructure(WoodMicrostructure):
 
         return x_grid_all, y_grid_all, thickness_all, thickness_all
 
+    @Clock.register('rcl:indexes')
     def get_ray_cell_indexes(self) -> npt.NDArray:
         """Get ray cell indexes"""
         ly = len(self.params.y_vector)
@@ -57,7 +58,7 @@ class BirchMicrostructure(WoodMicrostructure):
             ray_cell_x_ind_all = rcl.get_x_indexes(ly, 10, self.params.ray_space, 10)
         return ray_cell_x_ind_all.astype(int)
 
-    @Clock('vessels')
+    @Clock.register('vessels')
     def generate_vessel_indexes(self, ray_cell_x_ind_all: npt.NDArray = None) -> npt.NDArray:
         """Get vessels"""
         self.logger.info('=' * 80)

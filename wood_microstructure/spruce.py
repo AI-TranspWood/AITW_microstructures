@@ -92,6 +92,7 @@ class SpruceMicrostructure(WoodMicrostructure):
 
         return x_grid_all, y_grid_all, thickness_all_ray, thickness_all_fiber
 
+    @Clock.register('rcl:indexes')
     def get_ray_cell_indexes(self) -> npt.NDArray:
         """Get ray cell indexes"""
         ly = len(self.params.y_vector)
@@ -100,7 +101,7 @@ class SpruceMicrostructure(WoodMicrostructure):
             ray_cell_x_ind_all = rcl.get_x_indexes(ly, 8, np.round((ly - 15) / 10), 6)
         return ray_cell_x_ind_all.astype(int)
 
-    @Clock('vessels')
+    @Clock.register('vessels')
     def generate_vessel_indexes(self, ray_cell_x_ind_all: npt.NDArray = None):
         """Get vessels"""
         self.logger.info('=' * 80)
