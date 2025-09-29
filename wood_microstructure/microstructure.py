@@ -608,6 +608,14 @@ class WoodMicrostructure(Clock, ABC):
         """Get the sign grid of parameters for accumulating the deformation map"""
         pass
 
+    @abstractmethod
+    def _get_u1_v1(
+        self, xc_grid: npt.NDArray, yc_grid: npt.NDArray,
+        is_close_to_ray_far: npt.NDArray, sie_x: int, sie_y: int
+    ) -> tuple[npt.NDArray, npt.NDArray]:
+        """Get the large scale deformation u1 and v1"""
+        pass
+
     @Clock.register('deformation')
     @Clock.register('deform:generate')
     def generate_deformation(self, ray_cell_idx: npt.NDArray, indx_skip_all: npt.NDArray, idx_vessel_cen: npt.NDArray):
@@ -697,8 +705,9 @@ class WoodMicrostructure(Clock, ABC):
             local_dist = dist.local_distort(yp, xp, yc, xc, k)
             v[xp, yp] += -s * local_dist
 
+        u1, v1 = self._get_u1_v1(xc_grid, yc_grid, is_close_to_ray_far, sie_x, sie_y)
         # for xc, yc, cf in zip(xc_grid.flatten(), yc_grid.flatten(), is_close_to_ray_far.flatten()):
-        #     if np.random.rand() >= 0.01:
+        #     if np.random.rand() >= 1 / 100:
         #         continue
         #     k = [0.01, 0.008, 1.5 * (1 + np.random.rand()), 0.2 * (1 + np.random.rand())]
         #     if not cf:
@@ -714,8 +723,8 @@ class WoodMicrostructure(Clock, ABC):
         #         v1[xp, yp] += np.sign(np.random.randn()) * local_dist
         #         # v1 += np.sign(np.random.randn()) * local_distort(y, x, yc, xc, k)
 
-        return u, v
-        # return u, v, u1, v1
+        # return u, v
+        return u, v, u1, v1
 
     @Clock.register('deformation')
     @Clock.register('deform:rc_shrink')
@@ -866,6 +875,19 @@ class WoodMicrostructure(Clock, ABC):
 
         return img_interp
 
+    @abstractmethod
+    def _global_deformation(self, vol_img_ref: npt.NDArray, u1: npt.NDArray, v1: npt.NDArray):
+        """Apply global deformation to the volume image"""
+        pass
+
+    @Clock.register('deform:global')
+    def global_deformation(self, vol_img_ref: npt.NDArray, u1: npt.NDArray, v1: npt.NDArray):
+        """Apply global deformation to the volume image"""
+        self.logger.info('=' * 80)
+        self.logger.info('Global deformation...')
+
+        self._global_deformation(vol_img_ref, u1, v1)
+
     @Clock.register('Disk IO')
     def create_dirs(self):
         """Ensure the output directories are created"""
@@ -903,6 +925,7 @@ class WoodMicrostructure(Clock, ABC):
 
     def _generate(self):
         """Generate ray cells"""
+        # TODO: Check random seed behavior with multiprocessing
         np.random.seed(self.params.random_seed)
 
         thick_all_valid_sub, compress_all_valid_sub = self.get_distortion_map()
@@ -953,9 +976,9 @@ class WoodMicrostructure(Clock, ABC):
         # Save the generated volume
         self.save_slices(vol_img_ref, 'volImgBackBone')
 
-        # # u1 and v1 are in a commented part of the code. Prob used in original code?
-        # u, v, _, _ = self.generate_deformation(ray_cell_x_ind, indx_skip_all, indx_vessel_cen)
-        u, v = self.generate_deformation(ray_cell_x_ind, indx_skip_all, indx_vessel_cen)
+        # TODO: u1 and v1 are in a commented part of the code. Prob used in original code?
+        u, v, u1, v1 = self.generate_deformation(ray_cell_x_ind, indx_skip_all, indx_vessel_cen)
+        # u, v = self.generate_deformation(ray_cell_x_ind, indx_skip_all, indx_vessel_cen)
         self.logger.debug('u.shape: %s  min/max: %s %s', u.shape, u.min(), u.max())
         self.logger.debug('v.shape: %s  min/max: %s %s', v.shape, v.min(), v.max())
 
@@ -964,6 +987,11 @@ class WoodMicrostructure(Clock, ABC):
             v = v[..., np.newaxis] + v_all_ray
             self.logger.debug('vray   : %s  min/max: %s %s', v_all_ray.shape, v_all_ray.min(), v_all_ray.max())
             self.logger.debug('v.shape: %s  min/max: %s %s', v.shape, v.min(), v.max())
+
+        if compress_all_valid_sub.size:
+            # TODO: check usage of u_compress_Mat = repmat(compress_all_validSub,1,sizeImEnlarge(2)); in original
+            # code for spruce
+            pass
 
         for i, slice_idx in enumerate(self.params.save_slice):
             self.logger.debug('Saving deformation for slice %d', slice_idx)
@@ -977,6 +1005,8 @@ class WoodMicrostructure(Clock, ABC):
 
             filename = os.path.join(self.root_dir, 'LocalDistVolume', f'volImgRef_{slice_idx+1:05d}.tiff')
             self.save_2d_img(img_interp, filename, self.show_img)
+
+        self.global_deformation(vol_img_ref, u1, v1)
 
     def report(self):
         """Final report for the generation"""

@@ -2,10 +2,8 @@ import json
 import logging
 import multiprocessing as mp
 
-import click
-
 from .. import SpruceMicrostructure
-from .main import wood_microstructure
+from .main import click, wood_microstructure
 
 verbose_map = {
     0: logging.WARNING,

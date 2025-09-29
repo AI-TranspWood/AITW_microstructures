@@ -3,6 +3,7 @@ import numpy as np
 import numpy.typing as npt
 from scipy.interpolate import CubicSpline
 
+from . import distortion as dist
 from . import ray_cells as rcl
 from . import vessels as ves
 from .clocks import Clock
@@ -218,3 +219,29 @@ class SpruceMicrostructure(WoodMicrostructure):
         s_grid = np.ones((lx, ly))
 
         return s_grid
+
+    def _get_u1_v1(self, xc_grid, yc_grid, is_close_to_ray_far, sie_x, sie_y):
+        """Get the local distortion map u1, v1"""
+        u1 = np.zeros((sie_x, sie_y), dtype=float)
+        v1 = np.zeros((sie_x, sie_y), dtype=float)
+
+        for xc, yc, cf in zip(xc_grid.flatten(), yc_grid.flatten(), is_close_to_ray_far.flatten()):
+            if np.random.rand() >= 1 / 15:
+                continue
+
+            xp, yp = dist.get_distortion_grid(xc, yc, sie_x, sie_y, self.local_distortion_cutoff)
+
+            p = 0.5 if cf else 1.5
+            k = [0.04, 0.03, 1 + np.random.rand(), p * (1 + np.random.rand())]
+            local_dist = dist.local_distort(xp, yp, xc, yc, k)
+            u1[xp, yp] += local_dist
+
+            p = 0.4 if cf else 1.0
+            k = [0.04, 0.03, 1 + np.random.rand(), p * (1 + np.random.rand())]
+            local_dist = dist.local_distort(yp, xp, yc, xc, k)
+            v1[xp, yp] += np.sign(np.random.randn()) * local_dist
+
+        return u1, v1
+
+    def _global_deformation(self, vol_img_ref, u1, v1):
+        return

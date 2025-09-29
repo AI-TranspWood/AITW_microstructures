@@ -25,6 +25,7 @@ def get_logger(postfix: str = '') -> logging.Logger:
     # Console handler
     console_handler = RichHandler(
         rich_tracebacks=True,
+        tracebacks_suppress=['click', 'rich', 'rich_click', 'multiprocessing'],
         markup=True,
     )
     console_handler.setLevel(logging.DEBUG)
