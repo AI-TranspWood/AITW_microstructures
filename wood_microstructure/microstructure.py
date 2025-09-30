@@ -706,24 +706,7 @@ class WoodMicrostructure(Clock, ABC):
             v[xp, yp] += -s * local_dist
 
         u1, v1 = self._get_u1_v1(xc_grid, yc_grid, is_close_to_ray_far, sie_x, sie_y)
-        # for xc, yc, cf in zip(xc_grid.flatten(), yc_grid.flatten(), is_close_to_ray_far.flatten()):
-        #     if np.random.rand() >= 1 / 100:
-        #         continue
-        #     k = [0.01, 0.008, 1.5 * (1 + np.random.rand()), 0.2 * (1 + np.random.rand())]
-        #     if not cf:
-        #         k[3] *= 2.5
 
-        #     xp, yp = dist.get_distortion_grid(xc, yc, sie_x, sie_y, self.local_distortion_cutoff)
-        #     if np.random.randn() > 0:
-        #         local_dist = dist.local_distort(xp, yp, xc, yc, k)
-        #         u1[xp, yp] += np.sign(np.random.randn()) * local_dist
-        #         # u1 += np.sign(np.random.randn()) * local_distort(x, y, xc, yc, k)
-        #     else:
-        #         local_dist = dist.local_distort(yp, xp, yc, xc, k)
-        #         v1[xp, yp] += np.sign(np.random.randn()) * local_dist
-        #         # v1 += np.sign(np.random.randn()) * local_distort(y, x, yc, xc, k)
-
-        # return u, v
         return u, v, u1, v1
 
     @Clock.register('deformation')
@@ -883,12 +866,17 @@ class WoodMicrostructure(Clock, ABC):
         pass
 
     @Clock.register('deform:global')
-    def global_deformation(self, vol_img_ref: npt.NDArray, u1: npt.NDArray, v1: npt.NDArray):
+    def global_deformation(self, vol_img_ref: npt.NDArray, u1: npt.NDArray, v1: npt.NDArray) -> npt.NDArray:
         """Apply global deformation to the volume image"""
+        if not self.params.all_slices:
+            self.logger.warning(
+                'Global deformation is only applied when all slices are saved. Skipping global deformation.'
+            )
+            return
         self.logger.info('=' * 80)
         self.logger.info('Global deformation...')
 
-        self._global_deformation(vol_img_ref, u1, v1)
+        return self._global_deformation(vol_img_ref, u1, v1)
 
     @Clock.register('Disk IO')
     def create_dirs(self):
@@ -1008,7 +996,14 @@ class WoodMicrostructure(Clock, ABC):
             filename = os.path.join(self.root_dir, 'LocalDistVolume', f'volImgRef_{slice_idx+1:05d}.tiff')
             self.save_2d_img(img_interp, filename, self.show_img)
 
-        self.global_deformation(vol_img_ref, u1, v1)
+        vol_img_ref = self.global_deformation(vol_img_ref, u1, v1)
+
+        if self.params.all_slices:
+            dirname = os.path.join(self.root_dir, 'FinalVolume3D')
+            filename = os.path.join(dirname, 'FinalVolume.npy')
+            os.makedirs(dirname, exist_ok=True)
+
+            np.save(filename, vol_img_ref)
 
     def report(self):
         """Final report for the generation"""

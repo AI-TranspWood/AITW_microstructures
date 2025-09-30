@@ -47,6 +47,7 @@ class BaseParams:
     neighbor_local = np.array([[-1, 0, 1, 0], [0, -1, 0, 1]], dtype=int)  # d-indices of the neighbor grid nodes
 
     # Internal parameters
+    _all_slices = False  # Whether to save all slices or not
     _size_im_enlarge: tuple[int, int, int] = None
     _x_vector: npt.NDArray = None
     _y_vector: npt.NDArray = None
@@ -77,13 +78,22 @@ class BaseParams:
         """Post-initialization"""
         ss = self.save_slice
         if isinstance(ss, str):
-            ss = (int(ss) - 1,)
+            if ss == 'all':
+                self._all_slices = True
+                ss = tuple(range(self.size_im_enlarge[2]))
+            else:
+                ss = (int(ss) - 1,)
         elif isinstance(ss, int):
             ss = (ss - 1,)
         elif isinstance(ss, (tuple, list)):
             ss = tuple(int(s) - 1 for s in ss)
         self.save_slice = ss
         self.save_slice_map = {s: i for i, s in enumerate(ss)}
+
+    @property
+    def all_slices(self):
+        """Whether to save all slices"""
+        return self._all_slices
 
     @property
     def size_im_enlarge(self):
