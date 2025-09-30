@@ -1,6 +1,6 @@
 # AITW_microstructures
 
-Port of the AITW microstructures code from Matlab to Python.
+Port of the [AITW microstructure generation code](https://github.com/BinChenOPEN/Wood-Microstructure-Modeling) from Matlab to Python.
 
 ## Install
 
@@ -11,14 +11,14 @@ pip install .
 
 ## Usage
 
-### Script
+### Progamatically
 
 Example for birch microstructure generation.
 
 ```python
 from wood_microstructure import BirchMicrostructure, BirchParams
 
-params = BirchParams.from_json('FILE_NAME.json')
+params = BirchParams.from_json('FILE_PATH.json')
 
 for param in params:
     birch = BirchMicrostructure(param)
@@ -35,7 +35,7 @@ The installation will make available a `wood_ms` command line interface.
 Example for birch microstructure generation:
 
 ```bash
-wood_ms birch --json_file examples/example_birch.json
+wood_ms birch examples/example_birch.json
 ```
 
 #### Tab autocompletion
@@ -55,4 +55,3 @@ You can also add it to either `~/.bashrc` or, if you are using a virtual environ
 - W.R.T the matlab code, `saveSlice` in the json file can be a `list[int]` instead of just an `int`.
 - Most functions have been optimized to have the loop over the Z slices as the outermost one.
   Since the Z slices are almost always treated independently, we can than run the loops over only the slices of interest.
-- Need more testing with vessels
