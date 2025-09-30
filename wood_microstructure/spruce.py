@@ -1,9 +1,7 @@
 """Spruce microstructure generation module."""
-import os
-
 import numpy as np
 import numpy.typing as npt
-from scipy.interpolate import CubicSpline, RegularGridInterpolator, griddata
+from scipy.interpolate import CubicSpline
 
 from . import distortion as dist
 from . import ray_cells as rcl
@@ -66,15 +64,11 @@ class SpruceMicrostructure(WoodMicrostructure):
         """Specify the location of grid nodes and the thickness (with disturbance)"""
         gx, gy = self.params.x_grid.shape
         gz = self.params.size_im_enlarge[2]
-        ds = self.params.slice_interest_space
 
         cwt = self.params.cell_wall_thick
 
-        slice_interest = np.arange(0, gz, ds)
-        if slice_interest[-1] != gz - 1:
-            slice_interest = np.append(slice_interest, gz - 1)
+        slice_interest = self.slice_interest
         l = len(slice_interest)
-        self.slice_interest = slice_interest
 
         x_grid_interp = np.random.rand(gx, gy, l) * 3 - 1.5 + self.params.x_grid[..., np.newaxis]
         y_grid_interp = np.random.rand(gx, gy, l) * 3 - 1.5 + self.params.y_grid[..., np.newaxis]
@@ -248,90 +242,27 @@ class SpruceMicrostructure(WoodMicrostructure):
 
         return u1, v1
 
-    def _global_deformation(self, vol_img_ref, u1, v1):
+    def _get_global_interp_grid(
+            self,
+            x_grid: npt.NDArray, y_grid: npt.NDArray, z_grid: npt.NDArray,
+            u1: npt.NDArray, v1: npt.NDArray
+        ) -> tuple[npt.NDArray, npt.NDArray, npt.NDArray]:
+        """Get the interpolation grid for global deformation"""
         sie_x, sie_y, sie_z = self.params.size_im_enlarge
 
-        x_lin = np.arange(sie_x)
-        y_lin = np.arange(sie_y)
+        # v_allz   = (x_grid-sizeImEnlarge(1)*2/5).^3/1e7/2+(y_grid-sizeImEnlarge(2)/2).*(z_grid-sizeImEnlarge(3)/2)/(10^4)/5;
+        v_all_z = (
+            (x_grid - sie_x * 2 / 5)**3 / 1e7 / 2 +
+            (y_grid - sie_y / 2) * (z_grid - sie_z / 2) / (10**4) / 5
+        )
+        # u_allz   = (y_grid-sizeImEnlarge(1)/3).^2/1e4/3+(x_grid-sizeImEnlarge(2)/3).*(z_grid-sizeImEnlarge(3)/3)/(10^4)/4;
+        u_all_z = (
+            (y_grid - sie_x / 3)**2 / 1e4 / 3 +
+            (x_grid - sie_y / 3) * (z_grid - sie_z / 3) / (10**4) / 4
+        )
 
-        self.logger.info(f'{sie_x = }, {sie_y = }, {sie_z = }')
-        self.logger.info(f'slice_interest: {self.slice_interest}')
-        for slice_start, slice_end in zip(self.slice_interest[:-1], self.slice_interest[1:]):
-            self.logger.debug(f'Global distortion slice {slice_start} to {slice_end}...')
+        x_interp = x_grid - u_all_z - u1[..., np.newaxis]
+        y_interp = y_grid - v_all_z
+        z_interp = z_grid
 
-            x_grid, y_grid, z_grid = np.mgrid[0:sie_x, 0:sie_y, slice_start:slice_end]
-
-            # v_allz   = (x_grid-sizeImEnlarge(1)*2/5).^3/1e7/2+(y_grid-sizeImEnlarge(2)/2).*(z_grid-sizeImEnlarge(3)/2)/(10^4)/5;
-            v_all_z = (
-                (x_grid - sie_x * 2 / 5)**3 / 1e7 / 2 +
-                (y_grid - sie_y / 2) * (z_grid - sie_z / 2) / (10**4) / 5
-            )
-            # u_allz   = (y_grid-sizeImEnlarge(1)/3).^2/1e4/3+(x_grid-sizeImEnlarge(2)/3).*(z_grid-sizeImEnlarge(3)/3)/(10^4)/4;
-            u_all_z = (
-                (y_grid - sie_x / 3)**2 / 1e4 / 3 +
-                (x_grid - sie_y / 3) * (z_grid - sie_z / 3) / (10**4) / 4
-            )
-
-            # x_interp = x_grid-u_allz-repmat(u1,1,1,size(u_allz,3));
-            # y_interp = y_grid-v_allz;
-            # z_interp = z_grid;
-            x_interp = x_grid - u_all_z - u1[..., np.newaxis]
-            y_interp = y_grid - v_all_z
-            z_interp = z_grid
-
-            # Vq       = uint8(interpn(x_grid,y_grid,z_grid,volImgLocalDistSub,...
-            # x_interp(:),y_interp(:),z_interp(:),'linear'));
-            # VolImg_Temp   = reshape(Vq,[sizeImEnlarge(1),sizeImEnlarge(2),length(indxZ)]);
-            self.logger.info(f'Interpolating... {x_grid.shape}')
-            interp = RegularGridInterpolator(
-                (x_lin, y_lin, np.arange(slice_start, slice_end)),
-                vol_img_ref[..., slice_start:slice_end],
-                method='linear',
-                bounds_error=False,
-                fill_value=255
-            )
-            vol_img_temp = interp(
-                np.column_stack(
-                    (x_interp.flatten(), y_interp.flatten(), z_interp.flatten())
-                )
-            ).reshape((sie_x, sie_y, slice_end - slice_start))
-
-            vol_img_ref[..., slice_start:slice_end] = vol_img_temp
-
-            dirname = 'GlobalDistVolume'
-            for slice_idx in range(slice_start, slice_end):
-                filename = os.path.join(self.root_dir, dirname, f'volImgRef_{slice_idx+1:05d}.tiff')
-                self.save_2d_img(vol_img_ref[..., slice_idx], filename)
-
-        # extra_sx_mid = np.round(self.params.extra_size[0] / 2).astype(int)
-        # extra_sy_mid = np.round(self.params.extra_size[1] / 2).astype(int)
-        # extra_sz_mid = np.round(self.params.extra_size[2] / 2).astype(int)
-        extra_size = np.array(self.params.extra_size, dtype=int)
-        extra_sx_mid, extra_sy_mid, extra_sz_mid = extra_size // 2 + extra_size % 2
-
-        vol_sx, vol_sy, vol_sz = self.params.size_volume
-
-        # for i = round(extraSZ(3)/2)+1:sizeVolume(3)+round(extraSZ(3)/2)
-        #     imgName = fullfile(Folder_ImgSeries_GlobalDist,FileNameAll{i});
-        #     img = imread(imgName);
-        #     imgName_save = fullfile(Folder_FinalVolumeSlice,FileNameAll{i-round(extraSZ(3)/2)});
-        #     imwrite(img(round(extraSZ(1)/2)+1:sizeVolume(1)+round(extraSZ(1)/2),...
-        #         round(extraSZ(2)/2)+1:sizeVolume(2)+round(extraSZ(2)/2)),imgName_save);
-        # end
-        dirname = 'FinalVolumeSlice'
-        for slice_idx in range(extra_sz_mid, extra_sz_mid + vol_sz):
-            filename = os.path.join(self.root_dir, dirname, f'volImgRef_{slice_idx - extra_sz_mid + 1:05d}.tiff')
-            self.save_2d_img(
-                vol_img_ref[
-                    extra_sx_mid:extra_sx_mid + vol_sx,
-                    extra_sy_mid:extra_sy_mid + vol_sy,
-                    slice_idx
-                ],
-                filename
-            )
-
-        return vol_img_ref[
-            extra_sx_mid:extra_sx_mid + vol_sx,
-            extra_sy_mid:extra_sy_mid + vol_sy,
-            extra_sz_mid:extra_sz_mid + vol_sz
-        ]
+        return x_interp, y_interp, z_interp

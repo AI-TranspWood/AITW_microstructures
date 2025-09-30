@@ -27,9 +27,8 @@ class BirchMicrostructure(WoodMicrostructure):
         """Specify the location of grid nodes and the thickness (with disturbance)"""
         gx, gy = self.params.x_grid.shape
         gz = self.params.size_im_enlarge[2]
-        ds = self.params.slice_interest_space
 
-        slice_interest = np.arange(0, gz, ds)
+        slice_interest = self.slice_interest
         l = len(slice_interest)
 
         x_grid_interp = np.random.rand(gx, gy, l) * 3 - 1.5 + self.params.x_grid[..., np.newaxis]
@@ -211,5 +210,27 @@ class BirchMicrostructure(WoodMicrostructure):
 
         return u1, v1
 
-    def _global_deformation(self, vol_img_ref, u1, v1):
-        return
+    def _get_global_interp_grid(
+            self,
+            x_grid: npt.NDArray, y_grid: npt.NDArray, z_grid: npt.NDArray,
+            u1: npt.NDArray, v1: npt.NDArray
+        ) -> tuple[npt.NDArray, npt.NDArray, npt.NDArray]:
+        """Get the interpolation grid for global deformation"""
+        sie_x, sie_y, sie_z = self.params.size_im_enlarge
+
+        # v_allz   = (x_grid-sizeImEnlarge(1)/3).^2/1e4/8+(y_grid-sizeImEnlarge(2)/2).*(x_grid-sizeImEnlarge(1)/3)/1e4/9;
+        v_all_z = (
+            (x_grid - sie_x / 3)**2 / 1e4 / 8 +
+            (y_grid - sie_y / 2) * (x_grid - sie_x / 3) / 1e4 / 9
+        )
+        # u_allz   = (y_grid-sizeImEnlarge(1)/3).^2/1e4/9+(x_grid-sizeImEnlarge(2)/2).*(y_grid-sizeImEnlarge(1)/3)/1e4/8;
+        u_all_z = (
+            (y_grid - sie_x / 3)**2 / 1e4 / 9 +
+            (x_grid - sie_y / 2) * (y_grid - sie_x / 3) / 1e4 / 8
+        )
+
+        x_interp = x_grid - u_all_z - u1[..., np.newaxis]
+        y_interp = y_grid - v_all_z - v1[..., np.newaxis]
+        z_interp = z_grid
+
+        return x_interp, y_interp, z_interp

@@ -7,7 +7,7 @@ from collections import defaultdict
 import numpy as np
 import numpy.typing as npt
 from PIL import Image
-from scipy.interpolate import CubicSpline, griddata
+from scipy.interpolate import CubicSpline, RegularGridInterpolator, griddata
 
 from . import distortion as dist
 from . import ray_cells as rcl
@@ -77,6 +77,8 @@ class WoodMicrostructure(Clock, ABC):
     def __init__(self, params: BaseParams, *args, outdir: str = None, show_img: bool = False, **kwargs):
         super().__init__(*args, **kwargs)
 
+        self._slice_interest = None
+
         self.params = params
 
         self.x_grid_all = None
@@ -115,6 +117,19 @@ class WoodMicrostructure(Clock, ABC):
                 self.root_dir = dir_path
                 break
         return dir_cnt
+
+    @property
+    def slice_interest(self):
+        """Get the slices of interest"""
+        if self._slice_interest is None:
+            gz = self.params.size_im_enlarge[2]
+            ds = self.params.slice_interest_space
+
+            slice_interest = np.arange(0, gz, ds)
+            if slice_interest[-1] != gz - 1:
+                slice_interest = np.append(slice_interest, gz - 1)
+            self._slice_interest = slice_interest
+        return self._slice_interest
 
     @Clock.register('ray_cell')
     @Clock.register('rcl:distribute')
@@ -869,10 +884,15 @@ class WoodMicrostructure(Clock, ABC):
         return img_interp
 
     @abstractmethod
-    def _global_deformation(self, vol_img_ref: npt.NDArray, u1: npt.NDArray, v1: npt.NDArray) -> npt.NDArray:
-        """Apply global deformation to the volume image"""
+    def _get_global_interp_grid(
+            self,
+            x_grid: npt.NDArray, y_grid: npt.NDArray, z_grid: npt.NDArray,
+            u1: npt.NDArray, v1: npt.NDArray
+        ) -> tuple[npt.NDArray, npt.NDArray, npt.NDArray]:
+        """Get the interpolation grid for global deformation"""
         pass
 
+    @Clock.register('deformation')
     @Clock.register('deform:global')
     def global_deformation(self, vol_img_ref: npt.NDArray, u1: npt.NDArray, v1: npt.NDArray) -> npt.NDArray:
         """Apply global deformation to the volume image"""
@@ -884,7 +904,66 @@ class WoodMicrostructure(Clock, ABC):
         self.logger.info('=' * 80)
         self.logger.info('Global deformation...')
 
-        return self._global_deformation(vol_img_ref, u1, v1)
+        sie_x, sie_y, sie_z = self.params.size_im_enlarge
+
+        x_lin = np.arange(sie_x)
+        y_lin = np.arange(sie_y)
+
+        self.logger.info(f'{sie_x = }, {sie_y = }, {sie_z = }')
+        self.logger.info(f'slice_interest: {self.slice_interest}')
+        for slice_start, slice_end in zip(self.slice_interest[:-1], self.slice_interest[1:]):
+            self.logger.debug(f'Global distortion slice {slice_start} to {slice_end}...')
+
+            x_grid, y_grid, z_grid = np.mgrid[0:sie_x, 0:sie_y, slice_start:slice_end]
+
+            x_interp, y_interp, z_interp = self._get_global_interp_grid(x_grid, y_grid, z_grid, u1, v1)
+
+            # Vq       = uint8(interpn(x_grid,y_grid,z_grid,volImgLocalDistSub,...
+            # x_interp(:),y_interp(:),z_interp(:),'linear'));
+            # VolImg_Temp   = reshape(Vq,[sizeImEnlarge(1),sizeImEnlarge(2),length(indxZ)]);
+            self.logger.info(f'Interpolating... {x_grid.shape}')
+            interp = RegularGridInterpolator(
+                (x_lin, y_lin, np.arange(slice_start, slice_end)),
+                vol_img_ref[..., slice_start:slice_end],
+                method='linear',
+                bounds_error=False,
+                fill_value=255
+            )
+            vol_img_temp = interp(
+                np.column_stack(
+                    (x_interp.flatten(), y_interp.flatten(), z_interp.flatten())
+                )
+            ).reshape((sie_x, sie_y, slice_end - slice_start))
+
+            vol_img_ref[..., slice_start:slice_end] = vol_img_temp
+
+            dirname = 'GlobalDistVolume'
+            for slice_idx in range(slice_start, slice_end):
+                filename = os.path.join(self.root_dir, dirname, f'volImgRef_{slice_idx+1:05d}.tiff')
+                self.save_2d_img(vol_img_ref[..., slice_idx], filename)
+
+        extra_size = np.array(self.params.extra_size, dtype=int)
+        extra_sx_mid, extra_sy_mid, extra_sz_mid = extra_size // 2 + extra_size % 2
+
+        vol_sx, vol_sy, vol_sz = self.params.size_volume
+
+        dirname = 'FinalVolumeSlice'
+        for slice_idx in range(extra_sz_mid, extra_sz_mid + vol_sz):
+            filename = os.path.join(self.root_dir, dirname, f'volImgRef_{slice_idx - extra_sz_mid + 1:05d}.tiff')
+            self.save_2d_img(
+                vol_img_ref[
+                    extra_sx_mid:extra_sx_mid + vol_sx,
+                    extra_sy_mid:extra_sy_mid + vol_sy,
+                    slice_idx
+                ],
+                filename
+            )
+
+        return vol_img_ref[
+            extra_sx_mid:extra_sx_mid + vol_sx,
+            extra_sy_mid:extra_sy_mid + vol_sy,
+            extra_sz_mid:extra_sz_mid + vol_sz
+        ]
 
     @Clock.register('Disk IO')
     def create_dirs(self):
