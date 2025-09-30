@@ -978,9 +978,7 @@ class WoodMicrostructure(Clock, ABC):
             self.logger.debug('v.shape: %s  min/max: %s %s', v.shape, v.min(), v.max())
 
         if compress_all_valid_sub.size:
-            # TODO: check usage of u_compress_Mat = repmat(compress_all_validSub,1,sizeImEnlarge(2)); in original
-            # code for spruce
-            pass
+            u += compress_all_valid_sub.reshape(-1, 1)
 
         self.logger.info('=' * 80)
         for i, slice_idx in enumerate(self.params.save_slice):
