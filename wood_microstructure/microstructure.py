@@ -761,8 +761,15 @@ class WoodMicrostructure(Clock, ABC):
                     idx = idx_all[k]
 
                     # self.logger.debug(f'  {idx=} {x_node_grid[:, idx].shape=} {y_node_grid[:, idx].shape=} {dx.shape=}')
-                    y_node_grid_1 = CubicSpline(x_node_grid[:, idx], y_node_grid[:, idx])(dx)
-                    y_node_grid_2 = CubicSpline(x_node_grid[:, idx + 2], y_node_grid[:, idx + 2])(dx)
+                    # # TODO: check here as this can fail for non monotonic x_node_grid[:, idx]
+                    try:
+                        y_node_grid_1 = CubicSpline(x_node_grid[:, idx], y_node_grid[:, idx])(dx)
+                        y_node_grid_2 = CubicSpline(x_node_grid[:, idx + 2], y_node_grid[:, idx + 2])(dx)
+                    except ValueError:
+                        self.logger.warning('    WARNING: Spline interpolation failed')
+                        continue
+                    # y_node_grid_1 = CubicSpline(x_node_grid[:, idx], y_node_grid[:, idx])(dx)
+                    # y_node_grid_2 = CubicSpline(x_node_grid[:, idx + 2], y_node_grid[:, idx + 2])(dx)
 
                     v_node_grid_1 = dist_v[dx, np.round(y_node_grid_1).astype(int)]
                     v_node_grid_2 = dist_v[dx, np.round(y_node_grid_2).astype(int)]
@@ -828,6 +835,11 @@ class WoodMicrostructure(Clock, ABC):
                         v1_all = v1
                         v2_all = v2
 
+                # TODO: this is tied to the previous todo with the try/except on the splines
+                if v1_all is None or v2_all is None:
+                    self.logger.debug('    No valid deformation for this ray cell')
+                    continue
+
                 base_k += cnt[key]
                 v_all[:, :, i] += coeff1[slice_idx] * v1_all + coeff2[slice_idx] * v2_all
 
@@ -837,8 +849,6 @@ class WoodMicrostructure(Clock, ABC):
     @Clock.register('deform:apply')
     def apply_deformation(self, slice_ref: npt.NDArray, u: npt.NDArray, v: npt.NDArray) -> npt.NDArray:
         """Apply the deformation to the volume image"""
-        self.logger.info('=' * 80)
-        self.logger.info('Applying deformation...')
         sie_x, sie_y, _ = self.params.size_im_enlarge
         x_grid, y_grid = np.mgrid[0:sie_x, 0:sie_y]
         x_interp = x_grid + u
