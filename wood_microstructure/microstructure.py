@@ -873,10 +873,12 @@ class WoodMicrostructure(Clock, ABC):
         img_interp = Vq.reshape(x_interp.shape)
         img_interp = np.clip(img_interp, 0, 255)
 
+        slice_ref[:,:] = img_interp
+
         return img_interp
 
     @abstractmethod
-    def _global_deformation(self, vol_img_ref: npt.NDArray, u1: npt.NDArray, v1: npt.NDArray):
+    def _global_deformation(self, vol_img_ref: npt.NDArray, u1: npt.NDArray, v1: npt.NDArray) -> npt.NDArray:
         """Apply global deformation to the volume image"""
         pass
 
