@@ -1019,7 +1019,7 @@ class WoodMicrostructure(Clock, ABC):
         _, ext = os.path.splitext(os.path.basename(filename))
         ext = ext.lower()
 
-        if ext == 'nrrd':
+        if ext == '.nrrd':
             nrrd.write(filename, data.astype(np.uint8), index_order='C')
         elif ext == '.npy':
             np.save(filename, data)
