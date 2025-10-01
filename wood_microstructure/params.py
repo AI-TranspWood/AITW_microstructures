@@ -43,6 +43,7 @@ class BaseParams:
 
     save_slice: list[int] = 1  # List of slices (Z-index) to save (NOTE: inputfile is 1-indexed)
     save_volume_as_3d: bool = True
+    save_local_dist: bool = True
     save_global_dist: bool = True
     # write_local_deform_data: bool = True
     # write_global_deform_data: bool = False
@@ -77,6 +78,7 @@ class BaseParams:
         'isExistRayCell': 'is_exist_ray_cell',
         'cellWallThick': 'cell_wall_thick',
         'writeGlobalDeformData': 'save_global_dist',
+        'writeLocalDeformData': 'save_local_dist',
     }
 
     def __post_init__(self):

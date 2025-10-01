@@ -1020,6 +1020,8 @@ class WoodMicrostructure(Clock, ABC):
     @Clock.register('I/O:csv')
     def save_local_distortion(self, u: npt.NDArray, v: npt.NDArray, slice_idx: int):
         """Save the distortion fields"""
+        if not self.params.save_local_dist:
+            return
         u_name = os.path.join(self.root_dir, 'LocalDistVolumeDispU', f'u_volImgRef_{slice_idx+1:05d}.csv')
         v_name = os.path.join(self.root_dir, 'LocalDistVolumeDispV', f'v_volImgRef_{slice_idx+1:05d}.csv')
         self.ensure_dir(u_name)
@@ -1031,6 +1033,8 @@ class WoodMicrostructure(Clock, ABC):
     @Clock.register('I/O:csv')
     def save_global_distortion(self, u: npt.NDArray, v: npt.NDArray, slice_idx: int):
         """Save the distortion fields"""
+        if not self.params.save_global_dist:
+            return
         u_name = os.path.join(self.root_dir, 'GlobalDistVolumeDispU', f'u_volImgRef_{slice_idx+1:05d}.csv')
         v_name = os.path.join(self.root_dir, 'GlobalDistVolumeDispV', f'v_volImgRef_{slice_idx+1:05d}.csv')
         self.ensure_dir(u_name)
@@ -1113,7 +1117,7 @@ class WoodMicrostructure(Clock, ABC):
                 v_slice = v[..., i]
             else:
                 v_slice = v
-            self.save_local_distortion(u, v_slice, slice_idx)
+                self.save_local_distortion(u, v_slice, slice_idx)
 
             self.logger.info(f'Applying deformation... slice {slice_idx} ({i+1}/{len(self.params.save_slice)})')
             img_interp = self.apply_local_deformation(vol_img_ref[..., i], u, v_slice)
