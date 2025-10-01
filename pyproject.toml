@@ -24,7 +24,7 @@ dependencies = [
     "numpy",
     "scipy",
     "pillow",
-    "click",
+    "trogon", "click",
     "rich", "rich-click"
 ]
 
@@ -32,6 +32,11 @@ dependencies = [
 # Source = ""
 
 [project.optional-dependencies]
+utils = [
+    "matplotlib",
+    "mayavi",
+    "pynrrd",
+]
 pre-commit = [
     "pre-commit",
     "pylint",
