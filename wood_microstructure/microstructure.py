@@ -437,14 +437,14 @@ class WoodMicrostructure(Clock, ABC):
 
         lim = sie_x + ray_cell_length
 
-        vessel_end_loc = np.random.rand(*shape, 1) * ray_cell_length
+        vessel_end_loc = -np.random.rand(*shape, 1) * ray_cell_length
         while np.any(vessel_end_loc[...,-1] < lim):
             tmp = ray_cell_length + ray_cell_variance * np.random.randn(*shape, 1)
             tmp[tmp < rcl_d3] = rcl_t2
             tmp[tmp > rcl_t2] = rcl_t2
             vessel_end_loc = np.concatenate((vessel_end_loc, vessel_end_loc[..., -1:] + tmp), axis=-1)
-        vessel_end_loc = np.round(vessel_end_loc)
 
+        # Final filtering based on sie_x + ray_cell_length / 2 is done after to avoid altering the shape
         return vessel_end_loc.astype(int)
 
     @abstractmethod
@@ -503,6 +503,7 @@ class WoodMicrostructure(Clock, ABC):
 
         dx = np.arange(sie_x)
 
+        # Generates 1 column_idx at a time with X and X+1
         vessel_end_loc = self.get_vessel_end_loc(2)
 
         ray_column_rand = int(np.round(1 / 2 * ray_height))
@@ -578,21 +579,34 @@ class WoodMicrostructure(Clock, ABC):
                     flag = 0 if cnt < check else 1
 
                     for idx in range(vel_col_r, vel_col_r1):
+                        ##################
+                        # TODO: This needs to be checked:
+                        #  This commented part is carving out parallelipipedal boxes in the volume resetting it to
+                        #  255 (filled). The area with the ray cells is re-emptied in the part after.
+                        #  This is cause artefacts where the areas overlap with neighboring ray cells and vessels
+                        #  causing sharp edges.
+                        #  The only difference here between the original code is that we are doing an Z->Y->X
+                        #  loop instaed of a Y->X->Z loop. This should change the order of the overlap but it should
+                        #  still be there.
+                        #  Here by just not doing it it seems to be working as we are already skipping the fiber and
+                        #  vessel generation inside the ray cells.
+                        ##################
+                        # if j_slice == np.min(ray_width):
+                        #     y_idxs = np.arange(int(y_interp1_c[idx]), int(y_interp2_c[idx] + 1))
+                        #     z_idxs = np.arange(int(cell_center[idx, 2]), int(cell_neigh_pt[2, 1] + 1))
+                        # elif j_slice == np.max(ray_width):
+                        #     y_idxs = np.arange(int(y_interp1_c[idx]), int(y_interp2_c[idx] + 1))
+                        #     z_idxs = np.arange(int(cell_neigh_pt[2, 0]), int(cell_center[idx, 2] + 1))
+                        # else:
+                        #     y_idxs = np.arange(int(y_interp1_c[idx]), int(y_interp2_c[idx] + 1))
+                        #     z_idxs = np.arange(int(cell_neigh_pt[2, 0]), int(cell_neigh_pt[2, 1]))
+                        # z_idxs = [slice_map[z] for z in z_idxs if z in slice_map]
+                        # if z_idxs:
+                        #     y,z = np.meshgrid(y_idxs, z_idxs)
+                        #     vol_img_ref_final[idx, y, z] = 255
+
                         if idx not in valid_idx:
                             continue
-                        if j_slice == np.min(ray_width):
-                            y_idxs = np.arange(int(y_interp1_c[idx]), int(y_interp2_c[idx] + 1))
-                            z_idxs = np.arange(int(cell_center[idx, 2]), int(cell_neigh_pt[2, 1] + 1))
-                        elif j_slice == np.max(ray_width):
-                            y_idxs = np.arange(int(y_interp1_c[idx]), int(y_interp2_c[idx] + 1))
-                            z_idxs = np.arange(int(cell_neigh_pt[2, 0]), int(cell_center[idx, 2] + 1))
-                        else:
-                            y_idxs = np.arange(int(y_interp1_c[idx]), int(y_interp2_c[idx] + 1))
-                            z_idxs = np.arange(int(cell_neigh_pt[2, 0]), int(cell_neigh_pt[2, 1]))
-                        z_idxs = [slice_map[z] for z in z_idxs if z in slice_map]
-                        if z_idxs:
-                            y,z = np.meshgrid(y_idxs, z_idxs)
-                            vol_img_ref_final[idx, y, z] = 255
 
                         for s in range(int(cell_neigh_pt[2, 0]), int(cell_neigh_pt[2, 1]) + 1):
                             if s not in slice_map:
@@ -1052,8 +1066,9 @@ class WoodMicrostructure(Clock, ABC):
         np.savetxt(u_name, np.round(u, decimals=4), delimiter=',', fmt='%0.4f')
         np.savetxt(v_name, np.round(v, decimals=4), delimiter=',', fmt='%0.4f')
 
-    def _generate(self):
-        """Generate ray cells"""
+    def _generate_pipeline(self):
+        """Pipeline for the wood microstructure generation"""
+        v_fmt = self.params.save_volume_format.lower()
         # TODO: Check random seed behavior with multiprocessing
         np.random.seed(self.params.random_seed)
 
@@ -1103,6 +1118,10 @@ class WoodMicrostructure(Clock, ABC):
                 self.logger.info(f'Generating ray cell: {idx =}, {width = }  ({i+1}/{len(ray_cell_x_ind)})')
                 vol_img_ref = self.generate_raycell(idx, width, vol_img_ref, self.thickness_all_ray)
 
+        if self.params.save_volume_as_3d:
+            filename = os.path.join(self.root_dir, 'FinalVolume3D', f'BeforeLocalVolume.{v_fmt}')
+            self.save_3d_img(vol_img_ref, filename)
+
         # Save the generated volume
         self.save_slices(vol_img_ref, 'volImgBackBone')
 
@@ -1135,8 +1154,6 @@ class WoodMicrostructure(Clock, ABC):
             filename = os.path.join(self.root_dir, 'LocalDistVolume', f'volImgRef_{slice_idx+1:05d}.tiff')
             self.save_2d_img(img_interp, filename, self.show_img)
 
-
-        v_fmt = self.params.save_volume_format.lower()
         if self.params.apply_global_deform:
             if self.params.save_volume_as_3d:
                 filename = os.path.join(self.root_dir, 'FinalVolume3D', f'BeforeGlobalVolume.{v_fmt}')
@@ -1154,7 +1171,7 @@ class WoodMicrostructure(Clock, ABC):
     def generate(self):
         """Generate the volume image"""
         self.create_dirs()
-        self._generate()
+        self._generate_pipeline()
 
         self.report()
         self.logger.info('======== DONE ========')
