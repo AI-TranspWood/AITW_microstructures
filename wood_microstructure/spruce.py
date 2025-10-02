@@ -228,7 +228,11 @@ class SpruceMicrostructure(WoodMicrostructure):
             if np.random.rand() >= 1 / 15:
                 continue
 
-            xp, yp = dist.get_distortion_grid(xc, yc, sie_x, sie_y, self.local_distortion_cutoff)
+            xp, yp = dist.get_distortion_grid(
+                xc, yc, sie_x, sie_y,
+                # This deformation is much longer range so it needs to be applied to the entire area
+                max(sie_x, sie_y)
+            )
 
             p = 0.5 if cf else 1.5
             k = [0.04, 0.03, 1 + np.random.rand(), p * (1 + np.random.rand())]

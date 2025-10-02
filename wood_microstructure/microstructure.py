@@ -650,7 +650,9 @@ class WoodMicrostructure(Clock, ABC):
 
     @Clock.register('deformation')
     @Clock.register('deform:generate')
-    def generate_deformation(self, ray_cell_idx: npt.NDArray, indx_skip_all: npt.NDArray, idx_vessel_cen: npt.NDArray):
+    def generate_deformation(
+            self, ray_cell_idx: npt.NDArray, indx_skip_all: npt.NDArray, idx_vessel_cen: npt.NDArray
+        ) -> tuple[npt.NDArray, npt.NDArray, npt.NDArray, npt.NDArray]:
         """Add complicated deformation to the volume image. The deformation fields are generated separately.
         Then, they are summed together. Here u, v are initialized to be zero. Then they are summed."""
         self.logger.info('=' * 80)
@@ -1116,6 +1118,8 @@ class WoodMicrostructure(Clock, ABC):
         u, v, u1, v1 = self.generate_deformation(ray_cell_x_ind, indx_skip_all, indx_vessel_cen)
         self.logger.debug('u.shape: %s  min/max: %s %s', u.shape, u.min(), u.max())
         self.logger.debug('v.shape: %s  min/max: %s %s', v.shape, v.min(), v.max())
+        self.logger.debug('u1.shape: %s  min/max: %s %s', u1.shape, u1.min(), u1.max())
+        self.logger.debug('v1.shape: %s  min/max: %s %s', v1.shape, v1.min(), v1.max())
 
         if self.params.is_exist_ray_cell:
             v_all_ray = self.ray_cell_shrinking(ray_cell_width, ray_cell_x_ind, v)

@@ -199,7 +199,12 @@ class BirchMicrostructure(WoodMicrostructure):
             app = 0.2 if cf else 0.5
             k = [0.01, 0.008, 1.5 * (1 + np.random.rand()), app * (1 + np.random.rand())]
 
-            xp, yp = dist.get_distortion_grid(xc, yc, sie_x, sie_y, self.local_distortion_cutoff)
+            xp, yp = dist.get_distortion_grid(
+                xc, yc, sie_x, sie_y,
+                # This deformation is much longer range so it needs to be applied to the entire area
+                max(sie_x, sie_y)
+                # self.local_distortion_cutoff
+            )
             if np.random.randn() > 0:
                 local_dist = dist.local_distort(xp, yp, xc, yc, k)
                 u1[xp, yp] += np.sign(np.random.randn()) * local_dist
