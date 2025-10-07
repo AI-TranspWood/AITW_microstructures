@@ -24,7 +24,13 @@ wood_type_map: dict[str, WoodMicrostructure] = {
 @click.option('-v', '--verbose', help='Verbose output', count=True)
 # @click.option('--log_file', type=click.Path(), help='Log file name')
 @click.option('--max-parallel', type=int, default=1, help='Max parallel processeses')
-def generate(wood_type, json_file, output_dir, verbose, max_parallel):
+@click.option('--max-concurrent', type=int, default=1, help='Max concurrent processes')
+@click.option('--surrogate/--no-surrogate', is_flag=True, default=False, help='Use surrogate model')
+def generate(
+        wood_type, json_file, output_dir, verbose,
+        max_concurrent, max_parallel,
+        surrogate
+    ) -> None:
     """Generate wood microstructure"""
     cls = wood_type_map.get(wood_type.lower())
 
@@ -35,10 +41,18 @@ def generate(wood_type, json_file, output_dir, verbose, max_parallel):
     if isinstance(data, dict):
         data = [data]
 
-    args = [(d, output_dir, loglevel) for d in data]
+    args = [(d, output_dir, loglevel, max_parallel) for d in data]
 
-    with mp.Pool(max_parallel) as pool:
-        pool.starmap(cls.run_from_dict, args)
+    if surrogate:
+        for arg in args:
+            arg[0]['surrogate'] = True
+
+    if max_concurrent > 1:
+        with mp.Pool(max_concurrent) as pool:
+            pool.starmap(cls.run_from_dict, args)
+    else:
+        for arg in args:
+            cls.run_from_dict(*arg)
 
     click.echo(f"Birch microstructure generated and saved to `{output_dir or 'current directory'}`")
 
