@@ -27,7 +27,7 @@ dependencies = [
     "trogon", "click",
     "rich", "rich-click",
     "pynrrd",
-    "multiprocess",
+    # "multiprocess",
 ]
 
 # [project.urls]

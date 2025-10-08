@@ -3,6 +3,7 @@ import importlib
 import logging
 import os
 import sys
+# import threading
 from abc import ABC, abstractmethod
 from collections import defaultdict
 
@@ -118,6 +119,8 @@ class WoodMicrostructure(Clock, ABC):
         self.params.to_json(save_param_file)
 
         self.max_parallel = max_parallel
+        if max_parallel > 1:
+            self.logger.info('Using multiprocessing with %d processes', max_parallel)
 
         self.device = None
         self.surrogate = None
@@ -137,7 +140,6 @@ class WoodMicrostructure(Clock, ABC):
             self.surrogate = U_Net()
             self.surrogate.load_state_dict(torch.load(weight_file, map_location=self.device))
             self.logger.info('Using surrogate model with weights from `%s`', weight_file)
-            print(self.surrogate)
 
     def set_console_level(self, level: int):
         """Set the console logging level"""
@@ -942,6 +944,8 @@ class WoodMicrostructure(Clock, ABC):
             vol_img_ref[..., slice_idx] = img_interp
 
         if self.max_parallel > 1:
+            # TODO: WIP this does not work as it saves to separate memory spaces
+            raise NotImplementedError('Multiprocessing not implemented yet')
             with mp.Pool(self.max_parallel) as pool:
                 pool.map(_deform_slice, range(len(self.params.save_slice)))
         else:
@@ -955,21 +959,55 @@ class WoodMicrostructure(Clock, ABC):
         ) -> npt.NDArray:
         """Apply the deformation using the surrogate model"""
 
-        for i, slice_idx in enumerate(self.params.save_slice):
-            self.logger.info('[SURROGATE] Applying distortion for slice %d', slice_idx)
-            if self.params.is_exist_ray_cell:
-                v_slice = v[..., i]
-            else:
-                v_slice = v
+        if self.max_parallel == 1:
+            for i, slice_idx in enumerate(self.params.save_slice):
+                self.logger.info('[SURROGATE] Applying distortion for slice %d', slice_idx)
+                if self.params.is_exist_ray_cell:
+                    v_slice = v[..., i]
+                else:
+                    v_slice = v
 
-            img_interp = self.surrogate(
-                self.torch.from_numpy(vol_img_ref[..., i] / 255.0).float().unsqueeze(0).unsqueeze(0).to(self.device),
-                self.torch.from_numpy(u).float().unsqueeze(0).unsqueeze(0).to(self.device),
-                self.torch.from_numpy(v_slice).float().unsqueeze(0).unsqueeze(0).to(self.device)
-            )
-            img_interp = 255.0 * img_interp.squeeze().detach().cpu().numpy()
+                img_interp = self.surrogate(
+                    self.torch.from_numpy(vol_img_ref[..., i] / 255.0).float().unsqueeze(0).unsqueeze(0).to(self.device),
+                    self.torch.from_numpy(u).float().unsqueeze(0).unsqueeze(0).to(self.device),
+                    self.torch.from_numpy(v_slice).float().unsqueeze(0).unsqueeze(0).to(self.device)
+                )
+                img_interp = 255.0 * img_interp.squeeze().detach().cpu().numpy()
 
-            vol_img_ref[..., i] = img_interp
+                vol_img_ref[..., i] = img_interp
+        else:
+            last = len(self.params.save_slice)
+            chunk_edges = list(range(0, last + 1, self.max_parallel))
+            if chunk_edges[-1] != last:
+                chunk_edges.append(last)
+            for start, end in zip(chunk_edges[:-1], chunk_edges[1:]):
+                # TODO: Change shape of array in tool so that Z is the first dimension
+                self.logger.info(
+                    '[SURROGATE] Applying distortion for slices %d to %d', start, end - 1
+                )
+                u_t = self.torch.from_numpy(
+                    np.full((end - start, *u.shape), u)
+                ).float().unsqueeze(1).to(self.device)
+
+                if self.params.is_exist_ray_cell:
+                    v_t = self.torch.from_numpy(
+                        np.transpose(v[..., start:end], axes=(2, 0, 1))
+                    ).float().unsqueeze(1).to(self.device)
+                else:
+                    v_t = self.torch.from_numpy(v).float().unsqueeze(0).unsqueeze(0).to(self.device)
+
+                img_t = self.torch.from_numpy(
+                    np.transpose(vol_img_ref[..., start:end], axes=(2, 0, 1)) / 255.0
+                ).float().unsqueeze(1).to(self.device)
+
+                # print(f'{img_t.shape = }, {u_t.shape = }, {v_t.shape = }')
+                img_interp = self.surrogate(img_t, u_t, v_t)
+                img_interp = 255.0 * img_interp.squeeze().detach().cpu().numpy()
+
+                # print(f'{img_interp.shape = }')
+
+                vol_img_ref[..., start:end] = np.transpose(img_interp, axes=(1, 2, 0))
+
 
         return img_interp
 
