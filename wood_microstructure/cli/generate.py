@@ -22,13 +22,21 @@ wood_type_map: dict[str, WoodMicrostructure] = {
 @click.argument('json_file', required=True, type=click.Path(exists=True))
 @click.option('--output_dir', type=click.Path(), help='Output directory')
 @click.option('-v', '--verbose', help='Verbose output', count=True)
-# @click.option('--log_file', type=click.Path(), help='Log file name')
-@click.option('--max-parallel', type=int, default=1, help='Max parallel processeses')
-@click.option('--max-concurrent', type=int, default=1, help='Max concurrent processes')
+@click.option(
+    '--num-parallel', type=int, default=1,
+    help=(
+        'Number of parallel processeses used for single microstructure generation. When used in conjunction with'
+        ' --surrogate, defines the batch size for surrogate model inference.'
+    )
+)
+@click.option(
+    '--num-concurrent', type=int, default=1,
+    help='Number of concurrent microstructure generations.'
+)
 @click.option('--surrogate/--no-surrogate', is_flag=True, default=False, help='Use surrogate model')
 def generate(
         wood_type, json_file, output_dir, verbose,
-        max_concurrent, max_parallel,
+        num_concurrent, num_parallel,
         surrogate
     ) -> None:
     """Generate wood microstructure"""
@@ -41,20 +49,20 @@ def generate(
     if isinstance(data, dict):
         data = [data]
 
-    args = [(d, output_dir, loglevel, max_parallel) for d in data]
+    args = [(d, output_dir, loglevel, num_parallel) for d in data]
 
     if surrogate:
         for arg in args:
             arg[0]['surrogate'] = True
 
-    if max_concurrent > 1:
-        with mp.Pool(max_concurrent) as pool:
+    if num_concurrent > 1:
+        with mp.Pool(num_concurrent) as pool:
             pool.starmap(cls.run_from_dict, args)
     else:
         for arg in args:
             cls.run_from_dict(*arg)
 
-    click.echo(f"Birch microstructure generated and saved to `{output_dir or 'current directory'}`")
+    click.echo(f"Birch microstructures generated and saved to `{output_dir or 'current directory'}`")
 
 __all__ = [
     'generate'
