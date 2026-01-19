@@ -20,7 +20,6 @@ from .clocks import Clock
 from .fit_elipse import fit_elipse, fit_ellipse_6pt
 from .loggers import add_file_logger, get_logger, set_console_level
 from .params import BaseParams
-from .surrogate import U_Net
 
 
 class WoodMicrostructure(Clock, ABC):
@@ -137,6 +136,7 @@ class WoodMicrostructure(Clock, ABC):
             except ImportError as e:
                 self.logger.error('Install the package with the [surrogate] extra to use the surrogate model')
                 sys.exit(1)
+            from .surrogate import U_Net
             cls_name = self.__class__.__name__
             dir_name = os.path.dirname(__file__)
             weight_file = os.path.join(dir_name, f'{cls_name}.pt')
