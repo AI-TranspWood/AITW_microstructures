@@ -937,28 +937,29 @@ class WoodMicrostructure(Clock, ABC):
         x_grid, y_grid = np.mgrid[0:sie_x, 0:sie_y]
         x_interp = x_grid + u
 
-        def _deform_slice(slice_idx: int):
-            self.logger.info('Applying distortion for slice %d', slice_idx)
-            v_slice = v[..., slice_idx] if self.params.is_exist_ray_cell else v
+        def _deform_slice(array_idx: int, grid_idx: int = None):
+            gird_idx = array_idx if grid_idx is None else grid_idx
+            self.logger.info('Applying distortion for slice %d', gird_idx)
+            v_slice = v[..., array_idx] if self.params.is_exist_ray_cell else v
             y_interp = y_grid + v_slice
             Vq = griddata(
                 (x_interp.flatten(), y_interp.flatten()),
-                vol_img_ref[..., slice_idx].flatten(),
+                vol_img_ref[..., array_idx].flatten(),
                 (x_grid, y_grid),
                 method='linear',
                 fill_value=255
             )
             img_interp = Vq.reshape(x_interp.shape)
             img_interp = np.clip(img_interp, 0, 255).astype(np.uint8)
-            vol_img_ref[..., slice_idx] = img_interp
+            vol_img_ref[..., array_idx] = img_interp
 
         if self.num_parallel > 1:
-            indexes = list(range(len(self.params.save_slice)))
+            indexes = list(enumerate(self.params.save_slice))
             threads = []
             while indexes or threads:
                 while len(threads) < self.num_parallel and indexes:
-                    i = indexes.pop(0)
-                    thread = threading.Thread(target=_deform_slice, args=(i,))
+                    arr_idx, grid_idx = indexes.pop(0)
+                    thread = threading.Thread(target=_deform_slice, args=(arr_idx, grid_idx))
                     thread.start()
                     threads.append(thread)
                 torm = [i for i,t in enumerate(threads) if not t.is_alive()][::-1]
@@ -966,8 +967,8 @@ class WoodMicrostructure(Clock, ABC):
                     threads.pop(i)
                 time.sleep(0.1)
         else:
-            for i in range(len(self.params.save_slice)):
-                _deform_slice(i)
+            for arr_idx, grid_idx in enumerate(self.params.save_slice):
+                _deform_slice(arr_idx, grid_idx)
 
         return vol_img_ref
 
