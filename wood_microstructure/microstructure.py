@@ -282,8 +282,7 @@ class WoodMicrostructure(Clock, ABC):
             self._slice_interest = slice_interest
         return self._slice_interest
 
-    @Clock.register('ray_cell')
-    @Clock.register('rcl:distribute')
+    @Clock.register(['ray_cell', 'distribute'])
     def distrbute_ray_cells(self, ray_cell_x_ind_all: npt.NDArray) -> tuple[
             npt.NDArray,
             list[npt.NDArray],
@@ -789,8 +788,7 @@ class WoodMicrostructure(Clock, ABC):
         """Get the large scale deformation u1 and v1"""
         pass
 
-    @Clock.register('deformation')
-    @Clock.register('deform:generate')
+    @Clock.register(['deformation', 'generate'])
     def generate_deformation(
             self, ray_cell_idx: npt.NDArray, indx_skip_all: npt.NDArray, idx_vessel_cen: npt.NDArray
         ) -> tuple[npt.NDArray, npt.NDArray, npt.NDArray, npt.NDArray]:
@@ -882,8 +880,7 @@ class WoodMicrostructure(Clock, ABC):
 
         return u, v, u1, v1
 
-    @Clock.register('deformation')
-    @Clock.register('deform:rc_shrink')
+    @Clock.register(['deformation', 'rc_shrink'])
     def ray_cell_shrinking(self, width: npt.NDArray, idx_all: npt.NDArray, dist_v: npt.NDArray) -> npt.NDArray:
         """Shrink the ray cell width"""
         self.logger.info('=' * 80)
@@ -1013,8 +1010,7 @@ class WoodMicrostructure(Clock, ABC):
 
         return v_all
 
-    @Clock.register('deformation')
-    @Clock.register('deform:local')
+    @Clock.register(['deformation', 'local'])
     def apply_local_deformation(
             self, vol_img_ref: npt.NDArray, u: npt.NDArray, v: npt.NDArray
         ) -> npt.NDArray:
@@ -1138,8 +1134,7 @@ class WoodMicrostructure(Clock, ABC):
         """Get the interpolation grid for global deformation"""
         pass
 
-    @Clock.register('deformation')
-    @Clock.register('deform:global')
+    @Clock.register(['deformation', 'global'])
     def apply_global_deformation(self, vol_img_ref: npt.NDArray, u1: npt.NDArray, v1: npt.NDArray) -> npt.NDArray:
         """Apply global deformation to the volume image"""
         if not self.params.all_slices:
@@ -1230,8 +1225,7 @@ class WoodMicrostructure(Clock, ABC):
         os.makedirs(dirname, exist_ok=True)
 
     @staticmethod
-    @Clock.register('I/O')
-    @Clock.register('I/O:image')
+    @Clock.register(['I/O', 'image'])
     def save_2d_img(data: npt.NDArray, filename: str, show: bool = False):
         """Save 2D data to a TIFF file"""
         WoodMicrostructure.ensure_dir(filename)
@@ -1243,8 +1237,7 @@ class WoodMicrostructure(Clock, ABC):
         img.save(filename)
 
     @staticmethod
-    @Clock.register('I/O')
-    @Clock.register('I/O:image')
+    @Clock.register(['I/O', 'image'])
     def save_3d_img(data: npt.NDArray, filename: str):
         """Save 3D data to a npy file"""
         WoodMicrostructure.ensure_dir(filename)
@@ -1260,8 +1253,7 @@ class WoodMicrostructure(Clock, ABC):
         else:
             raise ValueError(f'Unsupported 3D image format: {ext}')
 
-    @Clock.register('I/O')
-    @Clock.register('I/O:csv')
+    @Clock.register(['I/O', 'csv'])
     def save_local_distortion(self, u: npt.NDArray, v: npt.NDArray, slice_idx: int):
         """Save the distortion fields"""
         if not self.params.save_local_dist:
@@ -1273,8 +1265,7 @@ class WoodMicrostructure(Clock, ABC):
         np.savetxt(u_name, np.round(u, decimals=4), delimiter=',', fmt='%0.4f')
         np.savetxt(v_name, np.round(v, decimals=4), delimiter=',', fmt='%0.4f')
 
-    @Clock.register('I/O')
-    @Clock.register('I/O:csv')
+    @Clock.register(['I/O', 'csv'])
     def save_global_distortion(self, u: npt.NDArray, v: npt.NDArray, slice_idx: int):
         """Save the distortion fields"""
         if not self.params.save_global_dist:
