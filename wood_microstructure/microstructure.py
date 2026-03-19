@@ -1022,11 +1022,39 @@ class WoodMicrostructure(Clock, ABC):
         self.logger.info('Local deformation...')
 
         if self.surrogate is None or self.device is None:
-            self._apply_local_deformation(vol_img_ref, u, v)
+            if self.device:
+                pass
+            else:
+                self._apply_local_deformation(vol_img_ref, u, v)
         else:
             self._apply_local_deformation_surrogate(vol_img_ref, u, v)
 
         return vol_img_ref
+
+    def _apply_local_deformation_gpu(self, vol_img_ref: npt.NDArray, u: npt.NDArray, v: npt.NDArray) -> npt.NDArray:
+        """Apply the deformation to the volume image using GPU acceleration"""
+        from .webgpu_griddata import GriddataLinearWebGPU
+
+        sie_x, sie_y, _ = self.params.size_im_enlarge
+        x_grid, y_grid = np.mgrid[0:sie_x, 0:sie_y]
+        x_interp = x_grid + u
+
+        for array_idx, grid_idx in enumerate(self.params.save_slice):
+            self.logger.info('Applying distortion for slice %d', grid_idx)
+            v_slice = v[..., array_idx] if self.params.is_exist_ray_cell else v
+            y_interp = y_grid + v_slice
+
+            interpolator = GriddataLinearWebGPU(
+                (x_interp.flatten(), y_interp.flatten()), vol_img_ref[..., array_idx].flatten(),
+                fill_value=255,
+                # points_xy, values,
+                # fill_value=np.nan,
+                # grid_width=512,
+                # grid_height=512
+            )
+            img_interp = interpolator((x_grid, y_grid))
+            img_interp = np.clip(img_interp, 0, 255).astype(np.uint8)
+            vol_img_ref[..., array_idx] = img_interp
 
     def _apply_local_deformation(self, vol_img_ref: npt.NDArray, u: npt.NDArray, v: npt.NDArray) -> npt.NDArray:
         """Apply the deformation to the volume image"""
