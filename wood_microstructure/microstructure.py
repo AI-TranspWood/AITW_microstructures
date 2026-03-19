@@ -1023,7 +1023,7 @@ class WoodMicrostructure(Clock, ABC):
 
         if self.surrogate is None or self.device is None:
             if self.device:
-                pass
+                self._apply_local_deformation_gpu(vol_img_ref, u, v)
             else:
                 self._apply_local_deformation(vol_img_ref, u, v)
         else:
