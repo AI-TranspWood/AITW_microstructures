@@ -23,6 +23,12 @@ from .fit_elipse import fit_elipse, fit_ellipse_6pt
 from .loggers import add_file_logger, get_logger, set_console_level
 from .params import BaseParams
 
+try:
+    from torch_geometric.nn.unpool import knn_interpolate
+    HAVE_TORCH_GEOMETRIC = True
+except ImportError:
+    HAVE_TORCH_GEOMETRIC = False
+
 # https://github.com/AI-TranspWood/AITW_microstructures/raw/refs/heads/main/wood_microstructure/BirchMicrostructure.pt
 GIT_SOURCE = 'https://github.com'
 GIT_OWNER = 'AI-TranspWood'
@@ -101,6 +107,7 @@ class WoodMicrostructure(Clock, ABC):
         ):
         super().__init__(*args, **kwargs)
 
+        self.torch = None
         self._slice_interest = None
         self.x_grid_all = None
         self.y_grid_all = None
@@ -144,6 +151,12 @@ class WoodMicrostructure(Clock, ABC):
             self.logger.info('Running in single process mode')
 
         self.device = None
+        try:
+            self.torch = torch = importlib.import_module('torch')
+            self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+        except ImportError:
+            self.logger.warning('PyTorch is not installed. Surrogate model or GPU acceleration will not be available.')
+        self.logger.info('Using device: %s', self.device)
         self.surrogate = None
         if self.params.surrogate:
             self.load_surrogate_model()
@@ -1022,7 +1035,7 @@ class WoodMicrostructure(Clock, ABC):
         self.logger.info('Local deformation...')
 
         if self.surrogate is None or self.device is None:
-            if self.device:
+            if self.device and self.torch and HAVE_TORCH_GEOMETRIC:
                 self._apply_local_deformation_gpu(vol_img_ref, u, v)
             else:
                 self._apply_local_deformation(vol_img_ref, u, v)
@@ -1033,26 +1046,36 @@ class WoodMicrostructure(Clock, ABC):
 
     def _apply_local_deformation_gpu(self, vol_img_ref: npt.NDArray, u: npt.NDArray, v: npt.NDArray) -> npt.NDArray:
         """Apply the deformation to the volume image using GPU acceleration"""
-        from .webgpu_griddata import GriddataLinearWebGPU
-
         sie_x, sie_y, _ = self.params.size_im_enlarge
-        x_grid, y_grid = np.mgrid[0:sie_x, 0:sie_y]
-        x_interp = x_grid + u
+        torch = self.torch
+        x_grid, y_grid = torch.meshgrid(
+            torch.arange(sie_x),
+            torch.arange(sie_y),
+            indexing='ij',
+        )
+        x_grid = x_grid.float().to(self.device).reshape(-1)
+        y_grid = y_grid.float().to(self.device).reshape(-1)
+        x_interp = x_grid + torch.from_numpy(u.flatten()).float().to(self.device)
+
+        interp_pts = torch.stack([x_grid, y_grid], dim=-1)
 
         for array_idx, grid_idx in enumerate(self.params.save_slice):
-            self.logger.info('Applying distortion for slice %d', grid_idx)
+            self.logger.info('[GPU] Applying distortion for slice %d', grid_idx)
             v_slice = v[..., array_idx] if self.params.is_exist_ray_cell else v
-            y_interp = y_grid + v_slice
+            y_interp = y_grid + torch.from_numpy(v_slice.flatten()).float().to(self.device)
 
-            interpolator = GriddataLinearWebGPU(
-                (x_interp.flatten(), y_interp.flatten()), vol_img_ref[..., array_idx].flatten(),
-                fill_value=255,
-                # points_xy, values,
-                # fill_value=np.nan,
-                # grid_width=512,
-                # grid_height=512
+            x_interp_torch = x_interp.flatten()
+            y_interp_torch = y_interp.flatten()
+            z_interp_torch = torch.from_numpy(vol_img_ref[..., array_idx].flatten()).float().to(self.device)
+
+            points = torch.stack([x_interp_torch, y_interp_torch], dim=-1)
+            value = z_interp_torch.unsqueeze(-1)  # knn_interpolate expects (N, C) shape for value
+            img_interp_torch = knn_interpolate(
+                value, points, interp_pts, k=3
             )
-            img_interp = interpolator((x_grid, y_grid))
+
+            img_interp = img_interp_torch.cpu().numpy()
+            img_interp = img_interp.reshape((sie_x, sie_y))
             img_interp = np.clip(img_interp, 0, 255).astype(np.uint8)
             vol_img_ref[..., array_idx] = img_interp
 
