@@ -196,7 +196,7 @@ class WoodMicrostructure(Clock, ABC):
         try:
             self.torch = torch = importlib.import_module('torch')
         except ImportError as e:
-            self.logger.error('Install the package with the \[surrogate] extra to use the surrogate model')
+            self.logger.error(r'Install the package with the \[surrogate] extra to use the surrogate model')
             sys.exit(1)
         from .surrogate import U_Net
 
