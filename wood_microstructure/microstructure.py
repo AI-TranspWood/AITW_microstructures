@@ -29,6 +29,14 @@ try:
 except ImportError:
     HAVE_TORCH_GEOMETRIC = False
 
+try:
+    import cupy
+    from cupyx.scipy.interpolate import \
+        LinearNDInterpolator as LinearNDInterpolator_CUPY
+    HAVE_CUPY = True
+except ImportError:
+    HAVE_CUPY = False
+
 # https://github.com/AI-TranspWood/AITW_microstructures/raw/refs/heads/main/wood_microstructure/BirchMicrostructure.pt
 GIT_SOURCE = 'https://github.com'
 GIT_OWNER = 'AI-TranspWood'
@@ -1036,7 +1044,9 @@ class WoodMicrostructure(Clock, ABC):
 
         if self.surrogate is None or self.device is None:
             if self.device and self.torch and HAVE_TORCH_GEOMETRIC:
-                self._apply_local_deformation_gpu(vol_img_ref, u, v)
+                self._apply_local_deformation_gpu_knn(vol_img_ref, u, v)
+            elif HAVE_CUPY and cupy.cuda.runtime.getDeviceCount() > 0:
+                self._apply_local_deformation_gpu_cupy(vol_img_ref, u, v)
             else:
                 self._apply_local_deformation(vol_img_ref, u, v)
         else:
@@ -1044,7 +1054,57 @@ class WoodMicrostructure(Clock, ABC):
 
         return vol_img_ref
 
-    def _apply_local_deformation_gpu(self, vol_img_ref: npt.NDArray, u: npt.NDArray, v: npt.NDArray) -> npt.NDArray:
+    def _apply_local_deformation_gpu_cupy(self, vol_img_ref: npt.NDArray, u: npt.NDArray, v: npt.NDArray) -> npt.NDArray:
+        """Apply the deformation to the volume image"""
+        sie_x, sie_y, _ = self.params.size_im_enlarge
+        x_grid, y_grid = np.mgrid[0:sie_x, 0:sie_y]
+        x_interp = x_grid + u
+
+        x_grid_gpu = cupy.asarray(x_grid)
+        y_grid_gpu = cupy.asarray(y_grid)
+        x_interp_gpu = cupy.asarray(x_interp.flatten())
+
+        def _deform_slice(array_idx: int, grid_idx: int = None):
+            gird_idx = array_idx if grid_idx is None else grid_idx
+            self.logger.info('[GPU cuPy] Applying distortion for slice %d', gird_idx)
+            v_slice = v[..., array_idx] if self.params.is_exist_ray_cell else v
+            y_interp = y_grid + v_slice
+
+            y_interp_gpu = cupy.asarray(y_interp.flatten())
+            values_gpu = cupy.asarray(vol_img_ref[..., array_idx].flatten())
+
+            interp = LinearNDInterpolator_CUPY(
+                (x_interp_gpu, y_interp_gpu), values_gpu,
+                fill_value=255
+            )
+            Vq = interp(
+                (x_grid_gpu, y_grid_gpu),
+            )
+            img_interp = Vq.get().reshape(x_interp.shape)
+            img_interp = np.clip(img_interp, 0, 255).astype(np.uint8)
+            vol_img_ref[..., array_idx] = img_interp
+
+        # TODO: It works but is slower. Should check if there is a way to do batching or optimize it
+        # if self.num_parallel > 1:
+        #     indexes = list(enumerate(self.params.save_slice))
+        #     threads = []
+        #     while indexes or threads:
+        #         while len(threads) < self.num_parallel and indexes:
+        #             arr_idx, grid_idx = indexes.pop(0)
+        #             thread = threading.Thread(target=_deform_slice, args=(arr_idx, grid_idx))
+        #             thread.start()
+        #             threads.append(thread)
+        #         torm = [i for i,t in enumerate(threads) if not t.is_alive()][::-1]
+        #         for i in torm:
+        #             threads.pop(i)
+        #         time.sleep(0.1)
+        # else:
+        for arr_idx, grid_idx in enumerate(self.params.save_slice):
+            _deform_slice(arr_idx, grid_idx)
+
+        return vol_img_ref
+
+    def _apply_local_deformation_gpu_knn(self, vol_img_ref: npt.NDArray, u: npt.NDArray, v: npt.NDArray) -> npt.NDArray:
         """Apply the deformation to the volume image using GPU acceleration"""
         sie_x, sie_y, _ = self.params.size_im_enlarge
         torch = self.torch
@@ -1060,7 +1120,7 @@ class WoodMicrostructure(Clock, ABC):
         interp_pts = torch.stack([x_grid, y_grid], dim=-1)
 
         for array_idx, grid_idx in enumerate(self.params.save_slice):
-            self.logger.info('[GPU] Applying distortion for slice %d', grid_idx)
+            self.logger.info('[GPU kNN] Applying distortion for slice %d', grid_idx)
             v_slice = v[..., array_idx] if self.params.is_exist_ray_cell else v
             y_interp = y_grid + torch.from_numpy(v_slice.flatten()).float().to(self.device)
 
