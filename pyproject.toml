@@ -37,6 +37,8 @@ Source = "https://github.com/AI-TranspWood/AITW_microstructures"
 [project.optional-dependencies]
 surrogate = [
     "torch",
+    "pooch",
+    "tqdm",
 ]
 gpu_griddata = [
     "torch-geometric",

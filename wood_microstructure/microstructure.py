@@ -194,10 +194,16 @@ class WoodMicrostructure(Clock, ABC):
         """Load the surrogate model"""
         cls_name = self.__class__.__name__
         try:
+            import pooch
             self.torch = torch = importlib.import_module('torch')
         except ImportError as e:
             self.logger.error(r'Install the package with the \[surrogate] extra to use the surrogate model')
             sys.exit(1)
+        try:
+            import tqdm
+            HAVE_TQDM = True
+        except ImportError:
+            HAVE_TQDM = False
         from .surrogate import U_Net
 
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -208,21 +214,16 @@ class WoodMicrostructure(Clock, ABC):
         try:
             self.surrogate.load_state_dict(torch.load(weight_file, map_location=self.device))
         except Exception as e:
-            weight_file = self.weights_home_path
-            try:
-                pathlib.Path(weight_file).parent.mkdir(parents=True, exist_ok=True)
-            except Exception as e:
-                self.logger.error('Failed to create model directory for `%s`', cls_name)
-                self.logger.error(str(e))
-                sys.exit(1)
+            weight_file = pooch.retrieve(
+                MODEL_URL_TEMPLATE.format(model_name=cls_name, commit=self.model_commit),
+                known_hash=None,
+                fname=self.weights_filename,
+                path=os.path.dirname(self.weights_home_path),
+                progressbar=HAVE_TQDM
+            )
+            self.logger.warning(f'Pooch downloaded surrogate model weights to: {weight_file}')
+            self.logger.warning(f'weight_file: {weight_file}')
 
-            if not os.path.exists(weight_file):
-                try:
-                    self.download_surrogate_model(weight_file)
-                except Exception as e:
-                    self.logger.error('Failed to download surrogate model weights for `%s`', cls_name)
-                    self.logger.error(str(e))
-                    sys.exit(1)
             try:
                 self.surrogate.load_state_dict(torch.load(weight_file, map_location=self.device))
             except Exception as e:
@@ -232,45 +233,6 @@ class WoodMicrostructure(Clock, ABC):
 
         self.logger.info('Surrogate model weights loaded from `%s`', weight_file)
         return weight_file
-
-    def download_surrogate_model(self, save_path: str):
-        """Download the surrogate model weights"""
-        cls_name = self.__class__.__name__
-        if self.model_commit is None:
-            raise ValueError(f'Model cannot be downloaded for `{cls_name}`: `model_commit` is not set')
-        url = MODEL_URL_TEMPLATE.format(model_name=cls_name, commit=self.model_commit)
-
-        self.logger.info('Downloading surrogate model weights for `%s` from `%s`', cls_name, url)
-
-        response = requests.get(url, stream=True)
-        total_size = int(response.headers.get('content-length', 0))
-        block_size = 4 * 1024  # 1 KB
-        wrote = 0
-        start_time = time.time()
-        last_time = -5
-        speed_units = ['B/s', 'KB/s', 'MB/s', 'GB/s']
-        with open(save_path, 'wb') as f:
-            for data in response.iter_content(block_size):
-                wrote = wrote + len(data)
-                f.write(data)
-                elapsed_time = time.time() - start_time
-                if elapsed_time - last_time > 1:
-                    speed = wrote / elapsed_time
-                    units = speed_units.copy()
-                    unit = units.pop(0)
-                    while speed > 1024 and len(units) > 1:
-                        speed /= 1024
-                        unit = units.pop(0)
-                    last_time = elapsed_time
-                    if total_size > 0:
-                        percent = wrote * 100 / total_size
-                        self.logger.debug(f'Downloading {save_path}: {percent:>4.2f}% at {speed:>6.2f} {unit}')
-                    else:
-                        self.logger.debug(f'Downloading {save_path}: {wrote:>10d} bytes at {speed:>6.2f} {unit}')
-
-        if total_size != 0 and wrote != total_size:
-            self.logger.error('Download failed: size mismatch')
-            raise Exception('Download failed: size mismatch')
 
     def set_console_level(self, level: int):
         """Set the console logging level"""
