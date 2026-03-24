@@ -20,11 +20,11 @@ class BirchMicrostructure(WoodMicrostructure):
     skip_cell_thick_rescale = 2.0
     model_commit = 'aef50579790849ba9c30a91a16688921aba9ac19'
 
-    def get_distortion_map(self) -> tuple[npt.NDArray, npt.NDArray]:
+    def _get_distortion_map(self) -> tuple[npt.NDArray, npt.NDArray]:
         """Generate the distortion map for early wood and late wood"""
         return np.empty((0, )), np.empty((0, ))
 
-    def get_grid_all(self, thick_all_valid_sub: npt.NDArray):
+    def _get_grid_all(self, thick_all_valid_sub: npt.NDArray):
         """Specify the location of grid nodes and the thickness (with disturbance)"""
         gx, gy = self.params.x_grid.shape
         gz = self.params.size_im_enlarge[2]
@@ -54,7 +54,7 @@ class BirchMicrostructure(WoodMicrostructure):
         return x_grid_all, y_grid_all, thickness_all, thickness_all
 
     @Clock.register(['ray_cell', 'indexes'])
-    def get_ray_cell_indexes(self) -> npt.NDArray:
+    def _get_ray_cell_indexes(self) -> npt.NDArray:
         """Get ray cell indexes"""
         ly = len(self.params.y_vector)
         ray_cell_x_ind_all = np.empty((1, 0))
@@ -63,7 +63,7 @@ class BirchMicrostructure(WoodMicrostructure):
         return ray_cell_x_ind_all.astype(int)
 
     @Clock.register('vessels')
-    def generate_vessel_indexes(self, ray_cell_x_ind_all: npt.NDArray = None) -> npt.NDArray:
+    def _generate_vessel_indexes(self, ray_cell_x_ind_all: npt.NDArray = None) -> npt.NDArray:
         """Get vessels"""
         self.logger.info('=' * 80)
         self.logger.info('Generating vessels...')
@@ -90,15 +90,15 @@ class BirchMicrostructure(WoodMicrostructure):
 
         return vessel_all.astype(int)
 
-    def get_indx_skip_all(self, vessel_all: npt.NDArray) -> npt.NDArray:
+    def _get_indx_skip_all(self, vessel_all: npt.NDArray) -> npt.NDArray:
         """Get the indexes of the grid nodes where fibers are not generated"""
         return ves.get_grid_idx_in_vessel(vessel_all)
 
-    def get_indx_ves_edges(self, vessel_all: npt.NDArray) -> npt.NDArray:
+    def _get_indx_ves_edges(self, vessel_all: npt.NDArray) -> npt.NDArray:
         """Get the indexes of the grid nodes at the edges of the vessels"""
         return ves.get_grid_idx_edges(vessel_all)
 
-    def get_indx_vessel_cen(self, vessel_all: npt.NDArray) -> npt.NDArray:
+    def _get_indx_vessel_cen(self, vessel_all: npt.NDArray) -> npt.NDArray:
         """Get the indexes of the grid nodes where fibers are not generated"""
         return vessel_all
 

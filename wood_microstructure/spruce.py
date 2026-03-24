@@ -19,7 +19,7 @@ class SpruceMicrostructure(WoodMicrostructure):
     ray_height_mod = 5
     skip_cell_thick_rescale = 1.5
 
-    def get_distortion_map(self) -> tuple[npt.NDArray, npt.NDArray]:
+    def _get_distortion_map(self) -> tuple[npt.NDArray, npt.NDArray]:
         """Generate the distortion map for early wood and late wood"""
         pparam = self.params.period_parameter
         cell_r = self.params.cell_r
@@ -60,7 +60,7 @@ class SpruceMicrostructure(WoodMicrostructure):
 
         return thick_all_valid_sub, compress_all_valid_sub
 
-    def get_grid_all(self, thick_all_valid_sub: npt.NDArray):
+    def _get_grid_all(self, thick_all_valid_sub: npt.NDArray):
         """Specify the location of grid nodes and the thickness (with disturbance)"""
         gx, gy = self.params.x_grid.shape
         gz = self.params.size_im_enlarge[2]
@@ -96,7 +96,7 @@ class SpruceMicrostructure(WoodMicrostructure):
         return x_grid_all, y_grid_all, thickness_all_ray, thickness_all_fiber
 
     @Clock.register(['ray_cell', 'indexes'])
-    def get_ray_cell_indexes(self) -> npt.NDArray:
+    def _get_ray_cell_indexes(self) -> npt.NDArray:
         """Get ray cell indexes"""
         ly = len(self.params.y_vector)
         ray_cell_x_ind_all = np.empty((1, 0))
@@ -105,7 +105,7 @@ class SpruceMicrostructure(WoodMicrostructure):
         return ray_cell_x_ind_all.astype(int)
 
     @Clock.register('vessels')
-    def generate_vessel_indexes(self, ray_cell_x_ind_all: npt.NDArray = None):
+    def _generate_vessel_indexes(self, ray_cell_x_ind_all: npt.NDArray = None):
         """Get vessels"""
         self.logger.info('=' * 80)
         self.logger.info('Generating vessels...')
@@ -121,15 +121,15 @@ class SpruceMicrostructure(WoodMicrostructure):
 
         return vessel_all.astype(int)
 
-    def get_indx_skip_all(self, vessel_all: npt.NDArray) -> npt.NDArray:
+    def _get_indx_skip_all(self, vessel_all: npt.NDArray) -> npt.NDArray:
         """Get the indexes of the grid nodes where fibers are not generated"""
         return np.empty((0, 6, 2), dtype=int)
 
-    def get_indx_ves_edges(self, vessel_all: npt.NDArray) -> npt.NDArray:
+    def _get_indx_ves_edges(self, vessel_all: npt.NDArray) -> npt.NDArray:
         """Get the indexes of the grid nodes at the edges of the vessels"""
         return np.empty((0, 6, 2), dtype=int)
 
-    def get_indx_vessel_cen(self, vessel_all: npt.NDArray) -> npt.NDArray:
+    def _get_indx_vessel_cen(self, vessel_all: npt.NDArray) -> npt.NDArray:
         """Get the indexes of the grid nodes where fibers are not generated"""
         return np.empty((0, 2), dtype=int)
 
@@ -143,13 +143,10 @@ class SpruceMicrostructure(WoodMicrostructure):
 
     def generate_large_fibers(
             self,
-            indx_vessel: npt.NDArray,
-            indx_vessel_cen: npt.NDArray,
-            # indx_skip_all: npt.NDArray,
-            input_volume: npt.NDArray
+            inplace: bool = True
         ) -> npt.NDArray:
         """Generate large fibers."""
-        return input_volume
+        return self.vol_img_ref if inplace else np.copy(self.vol_img_ref)
 
     def _generate_raycell_cell_r(self, interp1: npt.NDArray, interp2: npt.NDArray, dx: npt.NDArray, k: int):
         """Get the value of `cell_r` for `generate_raycell`"""
