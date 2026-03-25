@@ -41,6 +41,7 @@ class BaseParams:
     apply_local_deform: bool = True  # Whether to apply local deformation
     apply_global_deform: bool = True  # Whether to apply global deformation
 
+    save_slices_as_2d: bool = True
     save_volume_as_3d: bool = True
     save_volume_format: str = 'nrrd'
     save_local_dist: bool = True

@@ -19,7 +19,7 @@ from . import distortion as dist
 from . import ray_cells as rcl
 from .clocks import Clock
 from .fit_elipse import fit_elipse, fit_ellipse_6pt
-from .loggers import add_file_logger, get_logger, set_console_level
+from .loggers import LoggerMixin
 from .params import BaseParams
 from .progress import (PoochDownloadProgressBar, progress_bar,
                        progress_bar_level_inc)
@@ -47,7 +47,7 @@ GIT_REF = '{commit}'
 MODEL_URL_TEMPLATE = f'{GIT_SOURCE}/{GIT_OWNER}/{GIT_REPO}/raw/{GIT_REF}/wood_microstructure/{{model_name}}.pt'
 
 
-class WoodMicrostructure(Clock, ABC):
+class WoodMicrostructure(LoggerMixin, Clock, ABC):
     """Base class for wood microstructure generation"""
     ParamsClass: BaseParams = None
 
@@ -190,7 +190,7 @@ class WoodMicrostructure(Clock, ABC):
     def __init__(
             self,
             params: BaseParams, *args,
-            outdir: str = None, show_img: bool = False,
+            show_img: bool = False,
             output_formats: list[str] = None,
             num_parallel = 1,
             **kwargs
@@ -201,9 +201,6 @@ class WoodMicrostructure(Clock, ABC):
 
         self.show_img = show_img
         self.output_formats = output_formats or ['tiff']
-
-        self.init_outdir(outdir)
-        self.init_logging()
 
         self.init_params(params)
 
@@ -236,17 +233,6 @@ class WoodMicrostructure(Clock, ABC):
 
         save_param_file = os.path.join(self.root_dir, 'params.json')
         self.params.to_json(save_param_file)
-
-    def init_outdir(self, outdir: str):
-        """Initialize the output directory."""
-        self.outdir = outdir or os.getenv('WOODMS_OUTDIR', '.')
-        self.outdir_num = self.get_root_dir()
-
-    def init_logging(self):
-        """Initialize logging."""
-        log_file = os.path.join(self.root_dir, 'wood_microstructure.log')
-        self.logger = get_logger(str(self.outdir_num))
-        add_file_logger(self.logger, log_file)
 
     def init_parallel(self, num_parallel: int):
         """Initialize parallel processing."""
@@ -309,8 +295,7 @@ class WoodMicrostructure(Clock, ABC):
                 path=os.path.dirname(self.weights_home_path),
                 progressbar=PoochDownloadProgressBar()
             )
-            self.logger.warning(f'Pooch downloaded surrogate model weights to: {weight_file}')
-            self.logger.warning(f'weight_file: {weight_file}')
+            self.logger.info(f'Using weight_file: {weight_file}')
 
             try:
                 self.surrogate.load_state_dict(torch.load(weight_file, map_location=self.device))
@@ -371,7 +356,6 @@ class WoodMicrostructure(Clock, ABC):
         tasks.append((self.save_slices, ['FinalVolumeSlice'], {}, False))
         tasks.append((self.save_volume, ['FinalVolume3D', 'FinalVolume.nrrd'], {}, False))
 
-
     def run_pipeline(self):
         """Run the pipeline of tasks"""
         cls_name = self.__class__.__name__
@@ -407,27 +391,6 @@ class WoodMicrostructure(Clock, ABC):
         model_dir = aitw_home / 'models'
         model_path = model_dir / self.weights_filename
         return model_path.as_posix()
-
-    def set_console_level(self, level: int):
-        """Set the console logging level"""
-        set_console_level(self.logger, level)
-
-    def get_root_dir(self) -> int:
-        """Get the root directory for saving files"""
-        dir_cnt = 0
-        while os.path.exists(os.path.join(self.outdir, f'{self.save_prefix}_{dir_cnt}')):
-            dir_cnt += 1
-        while True:
-            try:
-                dir_path = os.path.join(self.outdir, f'{self.save_prefix}_{dir_cnt}')
-                os.makedirs(dir_path)
-            except FileExistsError:
-                dir_cnt += 1
-                continue
-            else:
-                self.root_dir = dir_path
-                break
-        return dir_cnt
 
     @property
     def slice_interest(self):
@@ -1503,7 +1466,7 @@ class WoodMicrostructure(Clock, ABC):
             )
 
             if self.params.save_global_dist:
-                self.save_global_distortion(
+                self.save_global_deformation(
                     u_all_z,
                     v_all_z,
                     slice_idx
@@ -1548,16 +1511,10 @@ class WoodMicrostructure(Clock, ABC):
 
         return self.vol_img_ref
 
-    @Clock.register('I/O')
-    def create_dirs(self):
-        """Ensure the output directories are created"""
-        for dir_name in ['volImgBackBone', 'LocalDistVolume', 'LocalDistVolumeDispU', 'LocalDistVolumeDispV']:
-            os.makedirs(os.path.join(self.root_dir, dir_name), exist_ok=True)
-
     def save_slices(self, dirname: str):
         """Save the requested slice of the generated volume image"""
-        # self.logger.debug('vol_img_ref.shape: %s', vol_img_ref.shape)
-        # self.logger.debug('min/max: %f %f', np.min(vol_img_ref), np.max(vol_img_ref))
+        if not self.params.save_slices_as_2d:
+            return
         for i,slice_idx in enumerate(self.params.save_slice):
             filename = os.path.join(self.root_dir, dirname, f'volImgRef_{slice_idx+1:05d}.tiff')
 
@@ -1633,7 +1590,10 @@ class WoodMicrostructure(Clock, ABC):
         """Save the local distortion fields"""
         if not self.params.save_local_dist:
             return
-        for i, slice_idx in enumerate(self.params.save_slice):
+        for i, slice_idx in progress_bar(
+                enumerate(self.params.save_slice),
+                description='Saving local distortion fields'
+            ):
             if self.params.is_exist_ray_cell:
                 v_slice = self.v[..., i]
             else:
@@ -1641,7 +1601,7 @@ class WoodMicrostructure(Clock, ABC):
             self._save_local_distortion(self.u, v_slice, slice_idx)
 
     @Clock.register(['I/O', 'csv'])
-    def save_global_distortion(self, u: npt.NDArray, v: npt.NDArray, slice_idx: int):
+    def save_global_deformation(self, u: npt.NDArray, v: npt.NDArray, slice_idx: int):
         """Save the distortion fields"""
         if not self.params.save_global_dist:
             return
@@ -1725,12 +1685,8 @@ class WoodMicrostructure(Clock, ABC):
 
     def generate(self):
         """Generate the volume image"""
-        self.create_dirs()
-        # self._generate_pipeline()
         self.run_pipeline()
-
         self.report()
-        self.logger.info('======== DONE ========')
 
     @classmethod
     def run_from_dict(
