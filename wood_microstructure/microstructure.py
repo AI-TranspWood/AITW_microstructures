@@ -4,10 +4,9 @@ import logging
 import os
 import pathlib
 import sys
-import threading
-import time
 from abc import ABC, abstractmethod
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import nrrd
 import numpy as np
@@ -1312,6 +1311,9 @@ class WoodMicrostructure(LoggerMixin, Clock, ABC):
         x_grid, y_grid = np.mgrid[0:sie_x, 0:sie_y]
         x_interp = x_grid + u
 
+        progress = progress_bar(range(len(self.params.save_slice)), description='Applying local deformation')
+        next(progress)  # to initialize the progress bar
+
         def _deform_slice(array_idx: int, grid_idx: int = None):
             gird_idx = array_idx if grid_idx is None else grid_idx
             self.logger.info('Applying distortion for slice %d', gird_idx)
@@ -1327,32 +1329,17 @@ class WoodMicrostructure(LoggerMixin, Clock, ABC):
             img_interp = Vq.reshape(x_interp.shape)
             img_interp = np.clip(img_interp, 0, 255).astype(np.uint8)
             vol_img_ref[..., array_idx] = img_interp
+            try:
+                next(progress)
+            except StopIteration:
+                pass
 
-        if self.num_parallel > 1:
-            indexes = list(enumerate(self.params.save_slice))
-            threads = []
-            progress = progress_bar(range(len(indexes)), description='Applying local deformation')
-            next(progress)  # to initialize the progress bar
-            while indexes or threads:
-                while len(threads) < self.num_parallel and indexes:
-                    arr_idx, grid_idx = indexes.pop(0)
-                    thread = threading.Thread(target=_deform_slice, args=(arr_idx, grid_idx))
-                    thread.start()
-                    threads.append(thread)
-                torm = [i for i,t in enumerate(threads) if not t.is_alive()][::-1]
-                for i in torm:
-                    try:
-                        next(progress)
-                    except StopIteration:
-                        pass
-                    threads.pop(i)
-                time.sleep(0.1)
-        else:
-            for arr_idx, grid_idx in progress_bar(
-                    list(enumerate(self.params.save_slice)),
-                    description='Applying local deformation'
-                ):
-                _deform_slice(arr_idx, grid_idx)
+        with ThreadPoolExecutor(max_workers=self.num_parallel) as executor:
+            futures = [
+                executor.submit(_deform_slice, i, slice_idx) for i, slice_idx in enumerate(self.params.save_slice)
+            ]
+            for future in as_completed(futures):
+                future.result()
 
         return vol_img_ref
 
@@ -1455,6 +1442,12 @@ class WoodMicrostructure(LoggerMixin, Clock, ABC):
         x_lin = np.arange(sie_x)
         y_lin = np.arange(sie_y)
 
+        progress = progress_bar(
+            range(len(self.params.save_slice)),
+            description='Applying global deformation'
+        )
+        next(progress)  # to initialize the progress bar
+
         def _deform_slice(array_idx: int, grid_idx: int = None):
             gird_idx = array_idx if grid_idx is None else grid_idx
             self.logger.debug('Applying global distortion for slice %d', gird_idx)
@@ -1482,32 +1475,17 @@ class WoodMicrostructure(LoggerMixin, Clock, ABC):
                 np.stack((x_interp, y_interp), axis=-1)
             ).astype(np.uint8)
             vol_img_ref[..., array_idx] = data
+            try:
+                next(progress)
+            except StopIteration:
+                pass
 
-        if self.num_parallel > 1:
-            indexes = list(enumerate(self.params.save_slice))
-            threads = []
-            progress = progress_bar(range(len(indexes)), description='Applying global deformation')
-            next(progress)  # to initialize the progress bar
-            while indexes or threads:
-                while len(threads) < self.num_parallel and indexes:
-                    arr_idx, grid_idx = indexes.pop(0)
-                    thread = threading.Thread(target=_deform_slice, args=(arr_idx, grid_idx))
-                    thread.start()
-                    threads.append(thread)
-                torm = [i for i,t in enumerate(threads) if not t.is_alive()][::-1]
-                for i in torm:
-                    try:
-                        next(progress)
-                    except StopIteration:
-                        pass
-                    threads.pop(i)
-                time.sleep(0.1)
-        else:
-            for i, slice_idx in progress_bar(
-                    list(enumerate(self.params.save_slice)),
-                    description='Applying global deformation'
-                ):
-                _deform_slice(slice_idx)
+        with ThreadPoolExecutor(max_workers=self.num_parallel) as executor:
+            futures = [
+                executor.submit(_deform_slice, i, slice_idx) for i, slice_idx in enumerate(self.params.save_slice)
+            ]
+            for future in as_completed(futures):
+                future.result()
 
         return vol_img_ref
 
