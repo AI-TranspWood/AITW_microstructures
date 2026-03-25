@@ -1316,7 +1316,7 @@ class WoodMicrostructure(LoggerMixin, Clock, ABC):
 
         def _deform_slice(array_idx: int, grid_idx: int = None):
             gird_idx = array_idx if grid_idx is None else grid_idx
-            self.logger.info('Applying distortion for slice %d', gird_idx)
+            self.logger.debug('Applying distortion for slice %d', gird_idx)
             v_slice = v[..., array_idx] if self.params.is_exist_ray_cell else v
             y_interp = y_grid + v_slice
             Vq = griddata(
@@ -1624,58 +1624,6 @@ class WoodMicrostructure(LoggerMixin, Clock, ABC):
     def v_fmt(self):
         """Get the volume format for saving"""
         return self.params.save_volume_format.lower()
-
-    def _generate_pipeline(self):
-        """Pipeline for the wood microstructure generation"""
-        # TODO: Check random seed behavior with multiprocessing
-        np.random.seed(self.params.random_seed)
-
-        self.get_distortion_map()
-        self.get_grid_all()
-        self.get_ray_cell_indexes()
-        self.generate_vessel_indexes()
-
-        self.get_indx_skip_all()
-        self.get_indx_ves_edges()
-        self.get_indx_vessel_cen()
-        self.distrbute_ray_cells()
-
-        self.initialize_volume()
-        self.generate_small_fibers()
-        self.generate_large_fibers()
-
-        # ray_cell_x_ind = self.ray_cell_x_ind
-        # ray_cell_width = self.ray_cell_width
-        # vol_img_ref = self.vol_img_ref
-
-        self.generate_raycell()
-        # if self.params.is_exist_ray_cell:
-        #     self.logger.info('Generating ray cells...')
-        #     for i,(idx, width) in enumerate(zip(ray_cell_x_ind, ray_cell_width)):
-        #         self.logger.info(f'Generating ray cell: {idx =}, {width = }  ({i+1}/{len(ray_cell_x_ind)})')
-        #         vol_img_ref = self.generate_raycell(idx, width, vol_img_ref, self.thickness_all_ray)
-
-        # Save the generated volume
-        self.save_volume('FinalVolume3D', 'BeforeLocalVolume.nrrd')
-        self.save_slices('volImgBackBone')
-
-        self.generate_deformation()
-        self.ray_cell_shrinking()
-        if self.compress_all_valid_sub.size:
-            self.logger.info('Applying compression distortion to simulate late/earyl wood...')
-            self.u += self.compress_all_valid_sub.reshape(-1, 1)
-        self.save_local_deformation()
-        self.apply_local_deformation()
-
-        self.save_slices('LocalDistVolume')
-        if self.params.apply_global_deform:
-            self.save_volume('FinalVolume3D', 'BeforeGlobalVolume.nrrd')
-            self.apply_global_deformation()
-            self.save_slices('GlobalDistVolume')
-
-        self.trim_extra_volume()
-        self.save_slices('FinalVolumeSlice')
-        self.save_volume('FinalVolume3D', 'FinalVolume.nrrd')
 
     def report(self):
         """Final report for the generation"""
