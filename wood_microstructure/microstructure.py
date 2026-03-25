@@ -1331,7 +1331,8 @@ class WoodMicrostructure(LoggerMixin, Clock, ABC):
         if self.num_parallel > 1:
             indexes = list(enumerate(self.params.save_slice))
             threads = []
-            progress = progress_bar(indexes, description='Applying local deformation')
+            progress = progress_bar(range(len(indexes)), description='Applying local deformation')
+            next(progress)  # to initialize the progress bar
             while indexes or threads:
                 while len(threads) < self.num_parallel and indexes:
                     arr_idx, grid_idx = indexes.pop(0)
@@ -1340,7 +1341,10 @@ class WoodMicrostructure(LoggerMixin, Clock, ABC):
                     threads.append(thread)
                 torm = [i for i,t in enumerate(threads) if not t.is_alive()][::-1]
                 for i in torm:
-                    next(progress)
+                    try:
+                        next(progress)
+                    except StopIteration:
+                        pass
                     threads.pop(i)
                 time.sleep(0.1)
         else:
@@ -1451,31 +1455,25 @@ class WoodMicrostructure(LoggerMixin, Clock, ABC):
         x_lin = np.arange(sie_x)
         y_lin = np.arange(sie_y)
 
-        # self.logger.info(f'{sie_x = }, {sie_y = }, {sie_z = }')
-        # self.logger.info(f'slice_interest: {self.slice_interest}')
-        for i, slice_idx in enumerate(self.params.save_slice):
-            if i % 25 == 0:
-                self.logger.info(f'Global distortion slice {slice_idx}...')
-            else:
-                self.logger.debug(f'Global distortion slice {slice_idx}...')
-
+        def _deform_slice(array_idx: int, grid_idx: int = None):
+            gird_idx = array_idx if grid_idx is None else grid_idx
+            self.logger.debug('Applying global distortion for slice %d', gird_idx)
             x_grid, y_grid = np.mgrid[0:sie_x, 0:sie_y]
-
             x_interp, y_interp, u_all_z, v_all_z = self._get_global_interp_grid(
-                x_grid, y_grid, slice_idx, u1, v1
+                x_grid, y_grid, array_idx, u1, v1
             )
 
             if self.params.save_global_dist:
                 self.save_global_deformation(
                     u_all_z,
                     v_all_z,
-                    slice_idx
+                    array_idx
                 )
 
             self.logger.debug(f'Interpolating... {x_grid.shape}')
             interp = RegularGridInterpolator(
                 (x_lin, y_lin),
-                vol_img_ref[..., i],
+                vol_img_ref[..., array_idx],
                 method='linear',
                 bounds_error=False,
                 fill_value=255
@@ -1483,11 +1481,33 @@ class WoodMicrostructure(LoggerMixin, Clock, ABC):
             data = interp(
                 np.stack((x_interp, y_interp), axis=-1)
             ).astype(np.uint8)
-            vol_img_ref[..., i] = data
+            vol_img_ref[..., array_idx] = data
 
-            # dirname = 'GlobalDistVolume'
-            # filename = os.path.join(self.root_dir, dirname, f'volImgRef_{slice_idx+1:05d}.tiff')
-            # self.save_2d_img(vol_img_ref[..., i], filename)
+        if self.num_parallel > 1:
+            indexes = list(enumerate(self.params.save_slice))
+            threads = []
+            progress = progress_bar(range(len(indexes)), description='Applying global deformation')
+            next(progress)  # to initialize the progress bar
+            while indexes or threads:
+                while len(threads) < self.num_parallel and indexes:
+                    arr_idx, grid_idx = indexes.pop(0)
+                    thread = threading.Thread(target=_deform_slice, args=(arr_idx, grid_idx))
+                    thread.start()
+                    threads.append(thread)
+                torm = [i for i,t in enumerate(threads) if not t.is_alive()][::-1]
+                for i in torm:
+                    try:
+                        next(progress)
+                    except StopIteration:
+                        pass
+                    threads.pop(i)
+                time.sleep(0.1)
+        else:
+            for i, slice_idx in progress_bar(
+                    list(enumerate(self.params.save_slice)),
+                    description='Applying global deformation'
+                ):
+                _deform_slice(slice_idx)
 
         return vol_img_ref
 
