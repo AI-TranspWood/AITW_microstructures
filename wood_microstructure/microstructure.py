@@ -13,8 +13,6 @@ import nrrd
 import numpy as np
 import numpy.typing as npt
 from PIL import Image
-from rich.progress import (BarColumn, DownloadColumn, Progress,
-                           TimeRemainingColumn, TransferSpeedColumn)
 from scipy.interpolate import CubicSpline, RegularGridInterpolator, griddata
 
 from . import distortion as dist
@@ -23,6 +21,8 @@ from .clocks import Clock
 from .fit_elipse import fit_elipse, fit_ellipse_6pt
 from .loggers import add_file_logger, get_logger, set_console_level
 from .params import BaseParams
+from .progress import (PoochDownloadProgressBar, progress_bar,
+                       progress_bar_level_inc)
 
 try:
     from torch_geometric.nn.unpool import knn_interpolate
@@ -45,31 +45,6 @@ GIT_REPO = 'AITW_microstructures'
 # GIT_REF = "refs/heads/main"
 GIT_REF = '{commit}'
 MODEL_URL_TEMPLATE = f'{GIT_SOURCE}/{GIT_OWNER}/{GIT_REPO}/raw/{GIT_REF}/wood_microstructure/{{model_name}}.pt'
-
-class RichProgressBar:
-    def __init__(self):
-        self.progress = Progress(
-            '[progress.description]{task.description}',
-            BarColumn(),
-            DownloadColumn(),
-            TransferSpeedColumn(),
-            TimeRemainingColumn(),
-        )
-        self.total = None
-        self.task_id = None
-
-    def update(self, n_bytes):
-        if self.task_id is None:
-            self.progress.start()
-            self.task_id = self.progress.add_task('Downloading...', total=self.total)
-        self.progress.update(self.task_id, advance=n_bytes)
-
-    def close(self):
-        self.progress.stop()
-
-    def reset(self):
-        self.progress.remove_task(self.task_id)
-        self.task_id = None
 
 
 class WoodMicrostructure(Clock, ABC):
@@ -222,38 +197,59 @@ class WoodMicrostructure(Clock, ABC):
         ):
         super().__init__(*args, **kwargs)
 
-        self.torch = None
+        self.init_attributes()
+
+        self.show_img = show_img
+        self.output_formats = output_formats or ['tiff']
+
+        self.init_outdir(outdir)
+        self.init_logging()
+
+        self.init_params(params)
+
+        self.init_parallel(num_parallel)
+        self.init_torch()
+        self.init_surrogate()
+
+        self.init_pipeline()
+
+    def init_attributes(self):
+        """Initialize attributes"""
         self._slice_interest = None
         self.x_grid_all = None
         self.y_grid_all = None
         self.thickness_all_ray = None
         self.thickness_all_fiber = None
 
-        self.show_img = show_img
-        self.outdir = outdir or os.getenv('ROOT_DIR', '.')
-        self.output_formats = output_formats or ['tiff']
+        self.vol_img_ref = None
+        self.ray_cell_x_ind_all = None
+        self.ray_cell_x_ind = None
+        self.ray_cell_width = None
+        self.indx_vessel = None
+        self.indx_vessel_cen = None
+        self.indx_ves_edges = None
+        self.indx_skip_all = None
 
-        # Setup logging
-        num = self.get_root_dir()
-        log_file = os.path.join(self.root_dir, 'wood_microstructure.log')
-        self.logger = get_logger(str(num))
-        add_file_logger(self.logger, log_file)
-
-        # Validate and set parameters
-        if params.apply_global_deform and not params.all_slices:
-            self.logger.warning('\n'.join([
-                '',
-                'Global deformation can only be applied when saving all slices.'
-                'Setting `apply_global_deform` to False.',
-                'Set `save_slice` to "all" to enable global deformation.',
-            ]))
-            params.apply_global_deform = False
-
+    def init_params(self, params: BaseParams):
+        """Initialize parameters"""
         self.params = params
 
         save_param_file = os.path.join(self.root_dir, 'params.json')
         self.params.to_json(save_param_file)
 
+    def init_outdir(self, outdir: str):
+        """Initialize the output directory."""
+        self.outdir = outdir or os.getenv('WOODMS_OUTDIR', '.')
+        self.outdir_num = self.get_root_dir()
+
+    def init_logging(self):
+        """Initialize logging."""
+        log_file = os.path.join(self.root_dir, 'wood_microstructure.log')
+        self.logger = get_logger(str(self.outdir_num))
+        add_file_logger(self.logger, log_file)
+
+    def init_parallel(self, num_parallel: int):
+        """Initialize parallel processing."""
         self.num_parallel = num_parallel
         self.logger.debug('num_parallel: %d', num_parallel)
         if num_parallel > 1:
@@ -265,46 +261,28 @@ class WoodMicrostructure(Clock, ABC):
         else:
             self.logger.info('Running in single process mode')
 
+    def init_torch(self):
+        """Initialize PyTorch and check for GPU availability."""
+        self.torch: importlib.ModuleType | None = None
         self.device = None
         try:
             self.torch = torch = importlib.import_module('torch')
             self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+            self.logger.info('PyTorch initialized successfully. Using device: %s', self.device)
         except ImportError:
             self.logger.warning('PyTorch is not installed. Surrogate model or GPU acceleration will not be available.')
-        self.logger.info('Using device: %s', self.device)
-        self.surrogate = None
-        if self.params.surrogate:
-            self.load_surrogate_model()
 
-    @property
-    def weights_filename(self) -> str:
-        """Get the name of the surrogate model"""
-        cls_name = self.__class__.__name__
-        return f'{cls_name}.pt'
-
-    @property
-    def weights_native_path(self) -> str:
-        """Get the native path of the surrogate model"""
-        dir_name = os.path.dirname(__file__)
-        weight_file = os.path.join(dir_name, self.weights_filename)
-        return weight_file
-
-    @property
-    def weights_home_path(self) -> str:
-        """Get the home path of the surrogate model"""
-        aitw_home = pathlib.Path.home() / '.aitw'
-        model_dir = aitw_home / 'models'
-        model_path = model_dir / self.weights_filename
-        return model_path.as_posix()
-
-    def load_surrogate_model(self):
+    def init_surrogate(self):
         """Load the surrogate model"""
+        self.surrogate = None
+        if not self.params.surrogate:
+            self.logger.debug('Surrogate model not enabled. Skipping surrogate initialization.')
+            return
         cls_name = self.__class__.__name__
-        try:
-            self.torch = torch = importlib.import_module('torch')
-        except ImportError as e:
+        if self.torch is None:
             self.logger.error(r'Install the package with the \[surrogate] extra to use the surrogate model')
             sys.exit(1)
+        torch = self.torch
         from .surrogate import U_Net
 
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
@@ -329,7 +307,7 @@ class WoodMicrostructure(Clock, ABC):
                 known_hash=None,
                 fname=self.weights_filename,
                 path=os.path.dirname(self.weights_home_path),
-                progressbar=RichProgressBar()
+                progressbar=PoochDownloadProgressBar()
             )
             self.logger.warning(f'Pooch downloaded surrogate model weights to: {weight_file}')
             self.logger.warning(f'weight_file: {weight_file}')
@@ -343,6 +321,92 @@ class WoodMicrostructure(Clock, ABC):
 
         self.logger.info('Surrogate model weights loaded from `%s`', weight_file)
         return weight_file
+
+    def init_seed(self):
+        """Initialize the random seed for reproducibility."""
+        np.random.seed(self.params.random_seed)
+
+    def init_pipeline(self):
+        """Generate list of tasks to run based on the parameters"""
+        self.tasks = tasks = []
+
+        tasks.append((self.init_seed, [], {}, False))
+        tasks.append((self.get_distortion_map, [], {}, False))
+        tasks.append((self.get_grid_all, [], {}, False))
+        tasks.append((self.get_ray_cell_indexes, [], {}, False))
+        tasks.append((self.generate_vessel_indexes, [], {}, True))
+
+        tasks.append((self.get_indx_skip_all, [], {}, False))
+        tasks.append((self.get_indx_ves_edges, [], {}, False))
+        tasks.append((self.get_indx_vessel_cen, [], {}, False))
+
+        tasks.append((self.distrbute_ray_cells, [], {}, True))
+
+        tasks.append((self.initialize_volume, [], {}, False))
+        tasks.append((self.generate_deformation, [], {}, True))
+        tasks.append((self.generate_small_fibers, [], {}, True))
+        tasks.append((self.generate_large_fibers, [], {}, True))
+        tasks.append((self.generate_raycell, [], {}, False))
+
+        tasks.append((self.save_slices, ['volImgBackBone'], {}, False))
+        tasks.append((self.save_volume, ['FinalVolume3D', 'BeforeLocalVolume.nrrd'], {}, False))
+
+        tasks.append((self.ray_cell_shrinking, [], {}, True))
+
+        tasks.append((self.apply_compression_deformation, [], {}, False))
+
+        tasks.append((self.save_local_deformation, [], {}, False))
+        tasks.append((self.apply_local_deformation, [], {}, True))
+
+        tasks.append((self.save_slices, ['LocalDistVolume'], {}, False))
+        tasks.append((self.save_volume, ['FinalVolume3D', 'BeforeGlobalVolume.nrrd'], {}, False))
+
+        tasks.append((self.apply_global_deformation, [], {}, True))
+
+        tasks.append((self.save_slices, ['GlobalDistVolume'], {}, False))
+        tasks.append((self.save_volume, ['FinalVolume3D', 'AfterGlobalVolume.nrrd'], {}, False))
+
+        tasks.append((self.trim_extra_volume, [], {}, False))
+
+        tasks.append((self.save_slices, ['FinalVolumeSlice'], {}, False))
+        tasks.append((self.save_volume, ['FinalVolume3D', 'FinalVolume.nrrd'], {}, False))
+
+
+    def run_pipeline(self):
+        """Run the pipeline of tasks"""
+        cls_name = self.__class__.__name__
+        for func, args, kwargs, logtask in progress_bar(
+                self.tasks,
+                description=f'Generating {cls_name} ...',
+            ):
+            if logtask:
+                self.logger.info('=' * 80)
+                self.logger.info('Running task: %s', func.__name__)
+                self.logger.debug('Task args: %s', args)
+                self.logger.debug('Task kwargs: %s', kwargs)
+            with progress_bar_level_inc():
+                func(*args, **kwargs)
+
+    @property
+    def weights_filename(self) -> str:
+        """Get the name of the surrogate model"""
+        cls_name = self.__class__.__name__
+        return f'{cls_name}.pt'
+
+    @property
+    def weights_native_path(self) -> str:
+        """Get the native path of the surrogate model"""
+        dir_name = os.path.dirname(__file__)
+        weight_file = os.path.join(dir_name, self.weights_filename)
+        return weight_file
+
+    @property
+    def weights_home_path(self) -> str:
+        """Get the home path of the surrogate model"""
+        aitw_home = pathlib.Path.home() / '.aitw'
+        model_dir = aitw_home / 'models'
+        model_path = model_dir / self.weights_filename
+        return model_path.as_posix()
 
     def set_console_level(self, level: int):
         """Set the console logging level"""
@@ -400,7 +464,6 @@ class WoodMicrostructure(Clock, ABC):
             self.ray_cell_width = []
             return self.ray_cell_x_ind, self.ray_cell_width
 
-        self.logger.info('=' * 80)
         self.logger.info('Distributing ray cells...')
 
         sie_z = self.params.size_im_enlarge[2]
@@ -448,7 +511,6 @@ class WoodMicrostructure(Clock, ABC):
         indx_skip_all = self.indx_skip_all
         input_volume = self.vol_img_ref
 
-        self.logger.info('=' * 80)
         self.logger.info('Generating small fibers...')
         output_volume = input_volume if inplace else np.copy(input_volume)
 
@@ -489,7 +551,10 @@ class WoodMicrostructure(Clock, ABC):
         skip_cell_thick = 0  # TODO: Should this be a settable parameter?
         # for i_slice in range(sie_z):
         num_slices = len(self.params.save_slice)
-        for slice_idx, i_slice in enumerate(self.params.save_slice):
+        for slice_idx, i_slice in progress_bar(
+                list(enumerate(self.params.save_slice)),
+                description='| Generating small fibers...'
+            ):
             self.logger.debug('  Small fibers: idx=%d  %d/%d', i_slice, slice_idx + 1, num_slices)
             x_slice = x_grid_all[:,:, slice_idx]
             y_slice = y_grid_all[:,:, slice_idx]
@@ -593,7 +658,6 @@ class WoodMicrostructure(Clock, ABC):
         input_volume = self.vol_img_ref
         output_volume = input_volume if inplace else np.copy(input_volume)
 
-        self.logger.info('=' * 80)
         self.logger.info('Generating large fibers...')
         self.logger.debug('  indx_vessel: %s', indx_vessel.shape)
         self.logger.debug('  indx_vessel_cen: %s', indx_vessel_cen.shape)
@@ -720,10 +784,28 @@ class WoodMicrostructure(Clock, ABC):
         """
         pass
 
+    def generate_raycell(self):
+        """Generate all ray cells across the volume"""
+        if not self.params.is_exist_ray_cell:
+            self.logger.debug('No ray cells to generate.')
+            return self.vol_img_ref
+
+        ray_cell_x_ind = self.ray_cell_x_ind
+        ray_cell_width = self.ray_cell_width
+
+        self.logger.info('Generating ray cells...')
+        for i,(idx, width) in progress_bar(
+                list(enumerate(zip(ray_cell_x_ind, ray_cell_width))),
+                description='Generating ray cells...'
+            ):
+            self.logger.info(f'Generating ray cell: {idx =}, {width = }  ({i+1}/{len(ray_cell_x_ind)})')
+            self._generate_raycell(idx, width, self.thickness_all_ray)
+
+
     @Clock.register('ray_cell')
-    def generate_raycell(
-            self, ray_idx: int, ray_width: npt.NDArray, input_volume: npt.NDArray,
-            thickness_all: npt.NDArray
+    def _generate_raycell(
+            self, ray_idx: int, ray_width: npt.NDArray, thickness_all: npt.NDArray,
+            inplace: bool = True
         ) -> npt.NDArray:
         """Generate ray cell
 
@@ -736,7 +818,7 @@ class WoodMicrostructure(Clock, ABC):
         Returns:
             npt.NDArray: Modified 3D gray-scale image volume with ray cells
         """
-        vol_img_ref_final = np.copy(input_volume)
+        vol_img_ref_final = self.vol_img_ref if inplace else np.copy(self.vol_img_ref)
 
         slice_map = self.params.save_slice_map
 
@@ -910,7 +992,6 @@ class WoodMicrostructure(Clock, ABC):
         indx_skip_all = self.indx_skip_all
         idx_vessel_cen = self.indx_vessel_cen
 
-        self.logger.info('=' * 80)
         self.logger.info('Generating deformation...')
         self.logger.debug('  ray_cell_idx: %s', ray_cell_idx.shape)
         sie_x, sie_y, _ = self.params.size_im_enlarge
@@ -1016,7 +1097,6 @@ class WoodMicrostructure(Clock, ABC):
         idx_all = self.ray_cell_x_ind
         dist_v = self.v
 
-        self.logger.info('=' * 80)
         self.logger.info('Ray cell shrinking...')
         # grid_shape = self.params.x_grid.shape
         # y_vector = self.params.y_vector
@@ -1154,7 +1234,6 @@ class WoodMicrostructure(Clock, ABC):
             #vol_img_ref: npt.NDArray, u: npt.NDArray, v: npt.NDArray
         ) -> npt.NDArray:
         """Apply local deformation to the volume image"""
-        self.logger.info('=' * 80)
         self.logger.info('Local deformation...')
 
         vol_img_ref = self.vol_img_ref if inplace else np.copy(self.vol_img_ref)
@@ -1218,7 +1297,10 @@ class WoodMicrostructure(Clock, ABC):
         #             threads.pop(i)
         #         time.sleep(0.1)
         # else:
-        for arr_idx, grid_idx in enumerate(self.params.save_slice):
+        for arr_idx, grid_idx in progress_bar(
+                list(enumerate(self.params.save_slice))
+                , description='[GPU CuPy] Applying local deformation'
+            ):
             _deform_slice(arr_idx, grid_idx)
 
         return vol_img_ref
@@ -1238,7 +1320,10 @@ class WoodMicrostructure(Clock, ABC):
 
         interp_pts = torch.stack([x_grid, y_grid], dim=-1)
 
-        for array_idx, grid_idx in enumerate(self.params.save_slice):
+        for array_idx, grid_idx in progress_bar(
+                list(enumerate(self.params.save_slice)),
+                description='[GPU kNN] Applying local deformation',
+            ):
             self.logger.info('[GPU kNN] Applying distortion for slice %d', grid_idx)
             v_slice = v[..., array_idx] if self.params.is_exist_ray_cell else v
             y_interp = y_grid + torch.from_numpy(v_slice.flatten()).float().to(self.device)
@@ -1283,6 +1368,7 @@ class WoodMicrostructure(Clock, ABC):
         if self.num_parallel > 1:
             indexes = list(enumerate(self.params.save_slice))
             threads = []
+            progress = progress_bar(indexes, description='Applying local deformation')
             while indexes or threads:
                 while len(threads) < self.num_parallel and indexes:
                     arr_idx, grid_idx = indexes.pop(0)
@@ -1291,10 +1377,14 @@ class WoodMicrostructure(Clock, ABC):
                     threads.append(thread)
                 torm = [i for i,t in enumerate(threads) if not t.is_alive()][::-1]
                 for i in torm:
+                    next(progress)
                     threads.pop(i)
                 time.sleep(0.1)
         else:
-            for arr_idx, grid_idx in enumerate(self.params.save_slice):
+            for arr_idx, grid_idx in progress_bar(
+                    list(enumerate(self.params.save_slice)),
+                    description='Applying local deformation'
+                ):
                 _deform_slice(arr_idx, grid_idx)
 
         return vol_img_ref
@@ -1305,7 +1395,10 @@ class WoodMicrostructure(Clock, ABC):
         """Apply the deformation using the surrogate model"""
 
         if self.num_parallel == 1:
-            for i, slice_idx in enumerate(self.params.save_slice):
+            for i, slice_idx in progress_bar(
+                    list(enumerate(self.params.save_slice)),
+                    description='[SURROGATE] Applying local deformation'
+                ):
                 self.logger.info('[SURROGATE] Applying distortion for slice %d', slice_idx)
                 if self.params.is_exist_ray_cell:
                     v_slice = v[..., i]
@@ -1325,7 +1418,10 @@ class WoodMicrostructure(Clock, ABC):
             chunk_edges = list(range(0, last + 1, self.num_parallel))
             if chunk_edges[-1] != last:
                 chunk_edges.append(last)
-            for start, end in zip(chunk_edges[:-1], chunk_edges[1:]):
+            for start, end in progress_bar(
+                    list(zip(chunk_edges[:-1], chunk_edges[1:])),
+                    description='[SURROGATE] Applying local deformation in batches'
+                ):
                 # TODO: Change shape of array in tool so that Z is the first dimension
                 self.logger.info(
                     '[SURROGATE] Applying distortion for slices %d to %d', start, end - 1
@@ -1358,10 +1454,18 @@ class WoodMicrostructure(Clock, ABC):
 
         return img_interp
 
+    def apply_compression_deformation(self):
+        """Apply the compression distortion to simulate late/early wood growth"""
+        if not self.compress_all_valid_sub.size:
+            return
+
+        self.logger.info('Applying compression distortion to simulate late/earyl wood...')
+        self.u += self.compress_all_valid_sub.reshape(-1, 1)
+
     @abstractmethod
     def _get_global_interp_grid(
             self,
-            x_grid: npt.NDArray, y_grid: npt.NDArray, z_grid: npt.NDArray,
+            x_grid: npt.NDArray, y_grid: npt.NDArray, slice_idx: int,
             u1: npt.NDArray, v1: npt.NDArray
         ) -> tuple[npt.NDArray, npt.NDArray, npt.NDArray, npt.NDArray, npt.NDArray]:
         """Get the interpolation grid for global deformation"""
@@ -1370,14 +1474,13 @@ class WoodMicrostructure(Clock, ABC):
     @Clock.register(['deformation', 'global'])
     def apply_global_deformation(self, inplace: bool = True) -> npt.NDArray:
         """Apply global deformation to the volume image"""
-        if not self.params.all_slices:
-            raise RuntimeError('Global deformation is only applied when all slices are saved.')
-
         vol_img_ref = self.vol_img_ref if inplace else np.copy(self.vol_img_ref)
+        if not self.params.apply_global_deform:
+            return vol_img_ref
+
         u1 = self.u1
         v1 = self.v1
 
-        self.logger.info('=' * 80)
         self.logger.info('Global deformation...')
 
         sie_x, sie_y, _ = self.params.size_im_enlarge
@@ -1387,34 +1490,41 @@ class WoodMicrostructure(Clock, ABC):
 
         # self.logger.info(f'{sie_x = }, {sie_y = }, {sie_z = }')
         # self.logger.info(f'slice_interest: {self.slice_interest}')
-        for slice_start, slice_end in zip(self.slice_interest[:-1], self.slice_interest[1:]):
-            self.logger.debug(f'Global distortion slice {slice_start} to {slice_end}...')
+        for i, slice_idx in enumerate(self.params.save_slice):
+            if i % 25 == 0:
+                self.logger.info(f'Global distortion slice {slice_idx}...')
+            else:
+                self.logger.debug(f'Global distortion slice {slice_idx}...')
 
-            x_grid, y_grid, z_grid = np.mgrid[0:sie_x, 0:sie_y, slice_start:slice_end]
+            x_grid, y_grid = np.mgrid[0:sie_x, 0:sie_y]
 
-            x_interp, y_interp, z_interp, u_all_z, v_all_z = self._get_global_interp_grid(
-                x_grid, y_grid, z_grid, u1, v1
+            x_interp, y_interp, u_all_z, v_all_z = self._get_global_interp_grid(
+                x_grid, y_grid, slice_idx, u1, v1
             )
 
             if self.params.save_global_dist:
-                for slice_idx in range(slice_start, slice_end):
-                    self.save_global_distortion(
-                        u_all_z[..., slice_idx - slice_start],
-                        v_all_z[..., slice_idx - slice_start],
-                        slice_idx
-                    )
+                self.save_global_distortion(
+                    u_all_z,
+                    v_all_z,
+                    slice_idx
+                )
 
-            self.logger.info(f'Interpolating... {x_grid.shape}')
+            self.logger.debug(f'Interpolating... {x_grid.shape}')
             interp = RegularGridInterpolator(
-                (x_lin, y_lin, np.arange(slice_start, slice_end)),
-                vol_img_ref[..., slice_start:slice_end],
+                (x_lin, y_lin),
+                vol_img_ref[..., i],
                 method='linear',
                 bounds_error=False,
                 fill_value=255
             )
-            vol_img_ref[..., slice_start:slice_end] = interp(
-                np.stack((x_interp, y_interp, z_interp), axis=-1)
+            data = interp(
+                np.stack((x_interp, y_interp), axis=-1)
             ).astype(np.uint8)
+            vol_img_ref[..., i] = data
+
+            # dirname = 'GlobalDistVolume'
+            # filename = os.path.join(self.root_dir, dirname, f'volImgRef_{slice_idx+1:05d}.tiff')
+            # self.save_2d_img(vol_img_ref[..., i], filename)
 
         return vol_img_ref
 
@@ -1433,6 +1543,8 @@ class WoodMicrostructure(Clock, ABC):
 
         if self.params.all_slices:
             self.vol_img_ref = self.vol_img_ref[:, :, extra_sz_mid:extra_sz_mid + vol_sz]
+
+        self.params._save_slice = [idx for idx in self.params.save_slice if extra_sz_mid <= idx < extra_sz_mid + vol_sz]
 
         return self.vol_img_ref
 
@@ -1476,7 +1588,7 @@ class WoodMicrostructure(Clock, ABC):
         filename = f'{base}.{ext}'
         image.save(filename)
 
-    @Clock.register(['I/O', 'image'])
+    @Clock.register(['I/O', 'image_2d'])
     def save_2d_img(self, data: npt.NDArray, filename: str, show: bool = False):
         """Save 2D data to a TIFF file"""
         self.ensure_dir(filename)
@@ -1488,7 +1600,7 @@ class WoodMicrostructure(Clock, ABC):
         for fmt in self.output_formats:
             self._save_2d_img_ext(img, filename, fmt)
 
-    @Clock.register(['I/O', 'image'])
+    @Clock.register(['I/O', 'image_3d'])
     def save_3d_img(self, data: npt.NDArray, filename: str):
         """Save 3D data to a npy file"""
         self.ensure_dir(filename)
@@ -1517,7 +1629,7 @@ class WoodMicrostructure(Clock, ABC):
         np.savetxt(u_name, np.round(u, decimals=4), delimiter=',', fmt='%0.4f')
         np.savetxt(v_name, np.round(v, decimals=4), delimiter=',', fmt='%0.4f')
 
-    def save_local_distortion(self):
+    def save_local_deformation(self):
         """Save the local distortion fields"""
         if not self.params.save_local_dist:
             return
@@ -1574,15 +1686,16 @@ class WoodMicrostructure(Clock, ABC):
         self.generate_small_fibers()
         self.generate_large_fibers()
 
-        ray_cell_x_ind = self.ray_cell_x_ind
-        ray_cell_width = self.ray_cell_width
-        vol_img_ref = self.vol_img_ref
+        # ray_cell_x_ind = self.ray_cell_x_ind
+        # ray_cell_width = self.ray_cell_width
+        # vol_img_ref = self.vol_img_ref
 
-        if self.params.is_exist_ray_cell:
-            self.logger.info('Generating ray cells...')
-            for i,(idx, width) in enumerate(zip(ray_cell_x_ind, ray_cell_width)):
-                self.logger.info(f'Generating ray cell: {idx =}, {width = }  ({i+1}/{len(ray_cell_x_ind)})')
-                vol_img_ref = self.generate_raycell(idx, width, vol_img_ref, self.thickness_all_ray)
+        self.generate_raycell()
+        # if self.params.is_exist_ray_cell:
+        #     self.logger.info('Generating ray cells...')
+        #     for i,(idx, width) in enumerate(zip(ray_cell_x_ind, ray_cell_width)):
+        #         self.logger.info(f'Generating ray cell: {idx =}, {width = }  ({i+1}/{len(ray_cell_x_ind)})')
+        #         vol_img_ref = self.generate_raycell(idx, width, vol_img_ref, self.thickness_all_ray)
 
         # Save the generated volume
         self.save_volume('FinalVolume3D', 'BeforeLocalVolume.nrrd')
@@ -1593,7 +1706,7 @@ class WoodMicrostructure(Clock, ABC):
         if self.compress_all_valid_sub.size:
             self.logger.info('Applying compression distortion to simulate late/earyl wood...')
             self.u += self.compress_all_valid_sub.reshape(-1, 1)
-        self.save_local_distortion()
+        self.save_local_deformation()
         self.apply_local_deformation()
 
         self.save_slices('LocalDistVolume')
@@ -1613,7 +1726,8 @@ class WoodMicrostructure(Clock, ABC):
     def generate(self):
         """Generate the volume image"""
         self.create_dirs()
-        self._generate_pipeline()
+        # self._generate_pipeline()
+        self.run_pipeline()
 
         self.report()
         self.logger.info('======== DONE ========')

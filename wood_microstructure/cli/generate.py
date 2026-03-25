@@ -72,8 +72,6 @@ def generate(
         for arg in args:
             cls.run_from_dict(*arg)
 
-    click.echo(f"Birch microstructures generated and saved to `{output_dir or 'current directory'}`")
-
 __all__ = [
     'generate'
 ]
