@@ -1,8 +1,8 @@
 
 """Module for handling progress bars in the CLI."""
-import atexit
-from contextlib import contextmanager
-
+from rich.console import Group
+from rich.live import Live
+from rich.panel import Panel
 from rich.progress import (BarColumn, DownloadColumn, MofNCompleteColumn,
                            Progress, SpinnerColumn, TextColumn,
                            TimeElapsedColumn, TimeRemainingColumn,
@@ -35,56 +35,74 @@ class PoochDownloadProgressBar:
         self.task_id = None
 
 
-ACTIVE_PROGRESS: Progress = Progress(
-    SpinnerColumn(),
-    TextColumn('[progress.description]{task.description}'),
-    BarColumn(),
-    MofNCompleteColumn(),
-    TimeElapsedColumn(),
-    TimeRemainingColumn(),
-)
-atexit.register(ACTIVE_PROGRESS.stop)
+class RichMixin:
+    pooc_progress_bar_cls = PoochDownloadProgressBar
 
-PROGRESS_BAR_LEVEL = 0
+    def __init__(self, *args, rich_live: Live = None, **kwargs):
+        if rich_live is None:
+            rich_live = Live(Group(), refresh_per_second=4)
+        progress_group: Group = rich_live.renderable
 
-def set_progress_bar_level(level: int):
-    """Set the global progress bar level."""
-    global PROGRESS_BAR_LEVEL
-    PROGRESS_BAR_LEVEL = level
+        overall_progress = Progress(
+            SpinnerColumn(),
+            TextColumn('[progress.description]{task.description}'),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
+        )
+        step_progress = Progress(
+            SpinnerColumn(),
+            TimeElapsedColumn(),
+            TextColumn('[progress.description]{task.description}'),
+            # BarColumn(),
+            # MofNCompleteColumn(),
+            # TimeRemainingColumn(),
+        )
+        current_step_progress = Progress(
+            SpinnerColumn(),
+            TextColumn('[progress.description]{task.description}'),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
+        )
+        current_group = Group(
+            Panel(
+                Group(step_progress, current_step_progress),
+                title='Step Progress',
+                expand=False,
+            ),
+            overall_progress,
+        )
+        progress_group.renderables.append(current_group)
 
-@contextmanager
-def progress_bar_level_inc(clean_tasks: bool = True):
-    """Context manager to increase the progress bar level."""
-    global PROGRESS_BAR_LEVEL
-    PROGRESS_BAR_LEVEL += 1
-    try:
-        yield
-    finally:
-        if clean_tasks:
-            progress_clean_tasks()
-        PROGRESS_BAR_LEVEL -= 1
+        self.overall_progress = overall_progress
+        self.step_progress = step_progress
+        self.current_step_progress = current_step_progress
+        # self.progress_group = progress_group
+        self.current_step_id = None
+        self.rich_live = rich_live
 
-def progress_bar(
-        iterable, total=None,
-        description=None, **kwargs
-    ):
-    """Create a progress bar using rich."""
+        super().__init__(*args, **kwargs)
 
-    ACTIVE_PROGRESS.start()
+    def track_step(self, iterable, total=None, description=None):
+        """Get a progress bar for the given iterable."""
+        if not total:
+            try:
+                total = len(iterable)
+            except TypeError:
+                total = None
 
-    if not total:
-        try:
-            total = len(iterable)
-        except TypeError:
-            total = None
-    kwargs['total'] = total
+        csp = self.current_step_progress
 
-    description = '| ' * PROGRESS_BAR_LEVEL + (description or 'Working')
+        task_id = csp.add_task(description or 'Processing...', total=total)
+        csp.update(task_id, description=description, total=total)
 
-    return ACTIVE_PROGRESS.track(iterable, description=description, **kwargs)
+        def new_iterable():
+            for item in iterable:
+                yield item
+                csp.update(task_id, advance=1)
+            csp.remove_task(task_id)
 
-def progress_clean_tasks():
-    """Cleanup the progress bar."""
-    for task in ACTIVE_PROGRESS.tasks:
-        if task.completed == task.total or task.total is None:
-            ACTIVE_PROGRESS.remove_task(task.id)
+        return new_iterable()
