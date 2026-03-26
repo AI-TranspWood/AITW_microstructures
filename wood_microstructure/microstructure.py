@@ -629,13 +629,13 @@ class WoodMicrostructure(RichMixin, LoggerMixin, Clock, ABC):
             inplace: bool = True
         ) -> npt.NDArray:
         """Generate large fibers."""
-        indx_vessel = self.indx_vessel
+        indx_vessel_edg = self.indx_ves_edges
         indx_vessel_cen = self.indx_vessel_cen
         input_volume = self.vol_img_ref
         output_volume = input_volume if inplace else np.copy(input_volume)
 
         # self.logger.info('Generating large fibers...')
-        self.logger.debug('  indx_vessel: %s', indx_vessel.shape)
+        self.logger.debug('  indx_vessel: %s', indx_vessel_edg.shape)
         self.logger.debug('  indx_vessel_cen: %s', indx_vessel_cen.shape)
 
         x_vector = self.params.x_vector
@@ -663,8 +663,8 @@ class WoodMicrostructure(RichMixin, LoggerMixin, Clock, ABC):
                     raise ValueError('More than one vessel in the same cell')
                 self.logger.debug('  large vessel at: idx = (%s, %s)', i1, j)
                 i_vessel = i_vessel[0]
-                six_pt_x = indx_vessel[i_vessel, :, 0]
-                six_pt_y = indx_vessel[i_vessel, :, 1]
+                six_pt_x = indx_vessel_edg[i_vessel, :, 0]
+                six_pt_y = indx_vessel_edg[i_vessel, :, 1]
 
                 # vessel_end_loc_all = [np.round(np.random.rand() * vessel_length)]
                 # for _ in range(int(np.ceil(sie_z / vessel_length)) + 8):
