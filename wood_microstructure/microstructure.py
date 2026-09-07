@@ -16,6 +16,7 @@ from scipy.interpolate import CubicSpline, RegularGridInterpolator, griddata
 
 from . import distortion as dist
 from . import ray_cells as rcl
+from . import utils
 from .clocks import Clock
 from .fit_elipse import fit_elipse, fit_ellipse_6pt
 from .loggers import LoggerMixin
@@ -357,6 +358,7 @@ class WoodMicrostructure(RichMixin, LoggerMixin, Clock, ABC):
         tasks.append((self.trim_extra_volume, [], {}, False))
 
         tasks.append((self.save_slices, ['FinalVolumeSlice'], {}, False))
+        tasks.append((self.binarize_volume, [], {}, False))
         tasks.append((self.save_volume, ['FinalVolume3D', 'FinalVolume.nrrd'], {}, False))
 
     def run_pipeline(self):
@@ -1524,6 +1526,11 @@ class WoodMicrostructure(RichMixin, LoggerMixin, Clock, ABC):
 
         self.params._save_slice = [idx for idx in self.params.save_slice if extra_sz_mid <= idx < extra_sz_mid + vol_sz]
 
+        return self.vol_img_ref
+
+    def binarize_volume(self) -> npt.NDArray:
+        """Binarize the volume image if requested"""
+        self.vol_img_ref = utils.binarize_volume(self.vol_img_ref, self.params.binarize_threshold)
         return self.vol_img_ref
 
     def save_slices(self, dirname: str):
