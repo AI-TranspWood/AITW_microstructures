@@ -47,6 +47,7 @@ gpu_griddata = [
 utils = [
     "matplotlib",
     "mayavi",
+    "vtk",
 ]
 pre-commit = [
     "pre-commit",
