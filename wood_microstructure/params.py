@@ -1,13 +1,57 @@
 """Input paramemters"""
 import json
 from dataclasses import dataclass
+from typing import Self
 
 import numpy as np
 import numpy.typing as npt
 
 
+class JsonParams:
+    params_map: dict[str, str] = {}
+    post_set: list[str] = []
+
+    def _to_json(self, data: dict) -> dict:
+        """Convert the parameters to a JSON serializable dictionary"""
+        return data
+
+    def to_json(self, json_file: str):
+        """Save the parameters to a JSON file"""
+        data = {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
+        data = self._to_json(data)
+
+        with open(json_file, 'w') as f:
+            json.dump(data, f, indent=4)
+
+    @classmethod
+    def from_json(cls, json_file: str) -> list[Self]:
+        """Create an instance from a JSON file"""
+        with open(json_file, 'r') as f:
+            data = json.load(f)
+        res = []
+        if isinstance(data, dict):
+            res = [cls.from_dict(data)]
+        elif isinstance(data, list):
+            res = [cls.from_dict(item) for item in data]
+        else:
+            raise ValueError('Invalid data format in JSON file')
+        return res
+
+    @classmethod
+    def from_dict(cls, data: dict) -> Self:
+        """Create an instance from a JSON file"""
+        post = {}
+        data = {cls.params_map.get(k, k): v for k, v in data.items()}
+        for k in cls.post_set:
+            if k in data:
+                post[k] = data.pop(k)
+        res = cls(**data)
+        for k, v in post.items():
+            setattr(res, k, v)
+        return res
+
 @dataclass
-class BaseParams:
+class BaseParams(JsonParams):
     """Base class for parameters"""
     period_parameter: int  # This parameter is related to the period of the year ring size
 
@@ -50,6 +94,7 @@ class BaseParams:
     # write_global_deform_data: bool = False
 
     surrogate: bool = False  # Whether to use surrogate model for local deformation
+    binarize_threshold: int = None  # Threshold for binarization of the final volume data. If None, no bin is applied.
 
     # Not user defined
     neighbor_local = np.array([[-1, 0, 1, 0], [0, -1, 0, 1]], dtype=int)  # d-indices of the neighbor grid nodes
@@ -168,42 +213,13 @@ class BaseParams:
             self._num_grid_nodes = self.x_grid.size()
         return self._num_grid_nodes
 
-    def to_json(self, json_file: str):
-        """Save the parameters to a JSON file"""
-        data = {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
+    def _to_json(self, data: dict) -> dict:
+        """Convert the parameters to a JSON serializable dictionary"""
         if self.all_slices:
-            data['save_slice'] = 'all'
+            data['saveSlice'] = 'all'
         else:
-            data['save_slice'] = [s + 1 for s in self.save_slice]  # Convert to 1-indexed for saving
-        with open(json_file, 'w') as f:
-            json.dump(data, f, indent=4)
-
-    @classmethod
-    def from_json(cls, json_file: str) -> list['BaseParams']:
-        """Create an instance from a JSON file"""
-        with open(json_file, 'r') as f:
-            data = json.load(f)
-        res = []
-        if isinstance(data, dict):
-            res = [cls.from_dict(data)]
-        elif isinstance(data, list):
-            res = [cls.from_dict(item) for item in data]
-        else:
-            raise ValueError('Invalid data format in JSON file')
-        return res
-
-    @classmethod
-    def from_dict(cls, data: dict) -> 'BaseParams':
-        """Create an instance from a JSON file"""
-        post = {}
-        data = {cls.params_map.get(k, k): v for k, v in data.items()}
-        for k in cls.post_set:
-            if k in data:
-                post[k] = data.pop(k)
-        res = cls(**data)
-        for k, v in post.items():
-            setattr(res, k, v)
-        return res
+            data['saveSlice'] = [s + 1 for s in self.save_slice]
+        return data
 
 @dataclass
 class BirchParams(BaseParams):
@@ -257,3 +273,33 @@ class SpruceParams(BaseParams):
 
     is_exist_vessel: bool = True
     is_exist_ray_cell: bool = True
+
+@dataclass
+class FitPorosityParams(JsonParams):
+    """Define the parameters for fitting porosity"""
+    input_file: str = None  # Input file path to a volume data file.
+
+    threshold: float = 127  # Threshold for binarization of the final volume data. If None, no bin is applied.
+    solid_is_high: bool = True  # Whether the solid part is dark or light in the image.
+                              # If True, the solid part is dark and the void part is light.
+                              # If False, the solid part is light and the void part is dark.
+    down: int = 2  # Downsample factor (1=no downsampling)
+
+    smooth_low_iters: int = 0  # Number of iterations for low-pass smoothing. If <= 0, no smoothing is applied.
+    smooth_sigma: float = 0.6  # Sigma for Gaussian smoothing. If <= 0, no smoothing is applied.
+
+    thicken: int = 0  # Dilate solid by N voxels (thicken walls, narrow throats)
+    final_smooth_iters: int = 0  # Number of iterations for final low-pass smoothing. If <= 0, no smoothing is applied.
+    final_smooth_sigma: float = 0.5  # Sigma for final Gaussian smoothing. If <= 0, no smoothing is applied.
+
+    upsample_intermediate: float = None  # Supersampling: first upsample by this factor (e.g., 3)
+    upsample_final: float = None  # Supersampling: then downsample to this net factor (e.g., 2). Creates smoother upsampling via anti-aliasing.
+
+    pad: int = 0  # Add N voxels of pore padding (positive) or crop N voxels (negative). Example: --pad 10 adds padding, --pad -5 crops 5 voxels from edges.
+    pad_xy_only: bool = False
+
+    porosity: float = None  # Target porosity [0, 1]. Uses SDF threshold search on raw grayscale. Pass 'None' or omit to disable (use --threshold instead).
+    sdf_sigma: float = 0.5  # SDF Gaussian blur sigma (higher = more boundary smearing)
+    adjust_porosity_post: bool = False  # Fine-tune porosity after processing via post-processing SDF adjustment
+
+    majority_filter: int = 1  # Remove thin protrusions (iterations). 0=off, 2-3 for aggressive filtering.
