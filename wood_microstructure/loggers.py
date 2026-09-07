@@ -11,6 +11,8 @@ class LoggerMixin:
         style='{'
     )
     console_fmt = None
+    save_prefix = None
+    logname = 'wood_microstructure'
 
     def __init__(self, *args, outdir: str = None, **kwargs):
         self.init_outdir(outdir)
@@ -22,7 +24,7 @@ class LoggerMixin:
         self.logger = logging.getLogger('wood' + str(self.outdir_num))
         self.logger.setLevel(logging.DEBUG)
         self.logger.propagate = False
-        log_file = os.path.join(self.root_dir, 'wood_microstructure.log')
+        log_file = os.path.join(self.root_dir, f'{self.logname}.log')
 
         self.add_console_handler()
         self.add_file_handler(log_file)
@@ -54,6 +56,8 @@ class LoggerMixin:
 
     def get_root_dir(self) -> int:
         """Get the root directory for saving files"""
+        if self.save_prefix is None:
+            raise ValueError('save_prefix must be set before calling get_root_dir()')
         dir_cnt = 0
         while os.path.exists(os.path.join(self.outdir, f'{self.save_prefix}_{dir_cnt}')):
             dir_cnt += 1
