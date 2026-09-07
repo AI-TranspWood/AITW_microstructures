@@ -264,7 +264,10 @@ class WoodMicrostructure(RichMixin, LoggerMixin, Clock, ABC):
             return
         cls_name = self.__class__.__name__
         if self.torch is None:
-            self.logger.error(r'Install the package with the \[surrogate] extra to use the surrogate model')
+            self.logger.error(
+                r'Surrogate model requires PyTorch. Install the package with the \[surrogate] extra or ensure PyTorch '
+                r'is installed in your environment.'
+            )
             sys.exit(1)
         torch = self.torch
         from .surrogate import U_Net
@@ -293,7 +296,7 @@ class WoodMicrostructure(RichMixin, LoggerMixin, Clock, ABC):
                 known_hash=None,
                 fname=self.weights_filename,
                 path=os.path.dirname(self.weights_home_path),
-                progressbar=self.pooc_progress_bar_cls()
+                progressbar=self.pooch_progress_bar_cls()
             )
             self.logger.info(f'Using weight_file: {weight_file}')
 

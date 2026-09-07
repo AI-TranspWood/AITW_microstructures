@@ -36,7 +36,7 @@ class PoochDownloadProgressBar:
 
 
 class RichMixin:
-    pooc_progress_bar_cls = PoochDownloadProgressBar
+    pooch_progress_bar_cls = PoochDownloadProgressBar
 
     def __init__(self, *args, rich_live: Live = None, **kwargs):
         if rich_live is None:
