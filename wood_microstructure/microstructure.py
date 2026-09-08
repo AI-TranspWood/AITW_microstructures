@@ -23,14 +23,6 @@ from .loggers import LoggerMixin
 from .params import BaseParams
 from .progress import RichMixin
 
-try:
-    import cupy
-    from cupyx.scipy.interpolate import \
-        LinearNDInterpolator as LinearNDInterpolator_CUPY
-    HAVE_CUPY = True
-except ImportError:
-    HAVE_CUPY = False
-
 # https://github.com/AI-TranspWood/AITW_microstructures/raw/refs/heads/main/wood_microstructure/BirchMicrostructure.pt
 GIT_SOURCE = 'https://github.com'
 GIT_OWNER = 'AI-TranspWood'
@@ -199,6 +191,7 @@ class WoodMicrostructure(RichMixin, LoggerMixin, Clock, ABC):
 
         self.init_parallel(num_parallel)
         self.init_torch()
+        self.init_cupy()
         self.init_surrogate()
 
         self.init_pipeline()
@@ -250,6 +243,20 @@ class WoodMicrostructure(RichMixin, LoggerMixin, Clock, ABC):
             self.logger.info('PyTorch initialized successfully. Using device: %s', self.device)
         except ImportError:
             self.logger.warning('PyTorch is not installed. Surrogate model or GPU acceleration will not be available.')
+
+    def init_cupy(self):
+        """Initialize CuPy and check for GPU availability."""
+        self.cupy: importlib.ModuleType | None = None
+        self.cupy_interpolator = None
+        try:
+            import cupy
+            from cupyx.scipy.interpolate import \
+                LinearNDInterpolator as LinearNDInterpolator_CUPY
+        except ImportError:
+            self.logger.info('CuPy is not installed. Griddata GPU acceleration will not be available.')
+        else:
+            self.cupy = cupy
+            self.cupy_interpolator = LinearNDInterpolator_CUPY
 
     def init_surrogate(self):
         """Load the surrogate model"""
@@ -1209,14 +1216,13 @@ class WoodMicrostructure(RichMixin, LoggerMixin, Clock, ABC):
             #vol_img_ref: npt.NDArray, u: npt.NDArray, v: npt.NDArray
         ) -> npt.NDArray:
         """Apply local deformation to the volume image"""
-        # self.logger.info('Local deformation...')
 
         vol_img_ref = self.vol_img_ref if inplace else np.copy(self.vol_img_ref)
         u = self.u
         v = self.v
 
         if self.surrogate is None or self.device is None:
-            f HAVE_CUPY and cupy.cuda.runtime.getDeviceCount() > 0:
+            if self.cupy and self.cupy.cuda.runtime.getDeviceCount() > 0:
                 self._apply_local_deformation_gpu_cupy(vol_img_ref, u, v)
             else:
                 self._apply_local_deformation(vol_img_ref, u, v)
@@ -1231,9 +1237,9 @@ class WoodMicrostructure(RichMixin, LoggerMixin, Clock, ABC):
         x_grid, y_grid = np.mgrid[0:sie_x, 0:sie_y]
         x_interp = x_grid + u
 
-        x_grid_gpu = cupy.asarray(x_grid)
-        y_grid_gpu = cupy.asarray(y_grid)
-        x_interp_gpu = cupy.asarray(x_interp.flatten())
+        x_grid_gpu = self.cupy.asarray(x_grid)
+        y_grid_gpu = self.cupy.asarray(y_grid)
+        x_interp_gpu = self.cupy.asarray(x_interp.flatten())
 
         def _deform_slice(array_idx: int, grid_idx: int = None):
             gird_idx = array_idx if grid_idx is None else grid_idx
@@ -1241,10 +1247,10 @@ class WoodMicrostructure(RichMixin, LoggerMixin, Clock, ABC):
             v_slice = v[..., array_idx] if self.params.is_exist_ray_cell else v
             y_interp = y_grid + v_slice
 
-            y_interp_gpu = cupy.asarray(y_interp.flatten())
-            values_gpu = cupy.asarray(vol_img_ref[..., array_idx].flatten())
+            y_interp_gpu = self.cupy.asarray(y_interp.flatten())
+            values_gpu = self.cupy.asarray(vol_img_ref[..., array_idx].flatten())
 
-            interp = LinearNDInterpolator_CUPY(
+            interp = self.cupy_interpolator(
                 (x_interp_gpu, y_interp_gpu), values_gpu,
                 fill_value=255
             )
@@ -1377,7 +1383,6 @@ class WoodMicrostructure(RichMixin, LoggerMixin, Clock, ABC):
                 # print(f'{img_interp.shape = }')
 
                 vol_img_ref[..., start:end] = np.transpose(img_interp, axes=(1, 2, 0))
-
 
         return img_interp
 
