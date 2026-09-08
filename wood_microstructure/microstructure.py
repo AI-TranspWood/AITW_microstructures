@@ -18,6 +18,7 @@ from . import distortion as dist
 from . import ray_cells as rcl
 from . import utils
 from .clocks import Clock
+from .filter_fit_porosity import FitPorosity
 from .fit_elipse import fit_elipse, fit_ellipse_6pt
 from .loggers import LoggerMixin
 from .params import BaseParams
@@ -368,6 +369,8 @@ class WoodMicrostructure(RichMixin, LoggerMixin, Clock, ABC):
         tasks.append((self.save_slices, ['FinalVolumeSlice'], {}, False))
         tasks.append((self.binarize_volume, [], {}, False))
         tasks.append((self.save_volume, ['FinalVolume3D', 'FinalVolume.nrrd'], {}, False))
+
+        tasks.append((self.fit_porosity, [], {}, bool(self.params.fit_porosity)))
 
     def run_pipeline(self):
         """Run the pipeline of tasks"""
@@ -1599,6 +1602,24 @@ class WoodMicrostructure(RichMixin, LoggerMixin, Clock, ABC):
         self.ensure_dir(v_name)
         np.savetxt(u_name, np.round(u, decimals=4), delimiter=',', fmt='%0.4f')
         np.savetxt(v_name, np.round(v, decimals=4), delimiter=',', fmt='%0.4f')
+
+    def fit_porosity(self):
+        """Run the extra step to fit the porosity of the generated volume image"""
+        if not self.params.fit_porosity:
+            return
+
+        final_volume = os.path.join(self.root_dir, 'FinalVolume3D', f'FinalVolume.nrrd')
+        if not os.path.exists(final_volume):
+            self.logger.warning('Final volume was not produced. Skipping porosity fitting.')
+            return
+
+        data = self.params.fit_porosity_params
+        data['input_file'] = final_volume
+        # data['output_dir'] = os.path.join(self.root_dir, 'PorosityFitting')
+
+        output_dir = os.path.join(self.root_dir, 'PorosityFitting')
+
+        FitPorosity.run_from_dict(data, output_dir=output_dir, loglevel=self.handler_level)
 
     def initialize_volume(self) -> npt.NDArray:
         """Initialize the volume image with the reference image (without deformation)"""

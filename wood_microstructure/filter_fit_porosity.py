@@ -233,7 +233,7 @@ class FitPorosity(RichMixin, LoggerMixin, Clock):
     def downsample(self):
         """Downsample the image"""
         if self.params.down <= 1:
-            self.logger.info(f"No downsampling applied (down={self.params.down})")
+            self.logger.debug(f"No downsampling applied (down={self.params.down})")
             return
         self.data = self._block_majority_downsample(self.data, self.params.down)
 
@@ -263,7 +263,7 @@ class FitPorosity(RichMixin, LoggerMixin, Clock):
     def lowres_smooth(self):
         """Smooth the image at low resolution"""
         if self.params.smooth_low_iters <= 0:
-            self.logger.info(f"No low-resolution smoothing applied (smooth_low_iters={self.params.smooth_low_iters})")
+            self.logger.debug(f"No low-resolution smoothing applied (smooth_low_iters={self.params.smooth_low_iters})")
             return
         for i in range(self.params.smooth_low_iters):
             self.data = self._sdf_smooth(self.data, self.params.smooth_sigma)
@@ -280,7 +280,7 @@ class FitPorosity(RichMixin, LoggerMixin, Clock):
     def thicken(self):
         """Thicken the solid phase of the image"""
         if self.params.thicken <= 0:
-            self.logger.info(f"No thickening applied (thicken={self.params.thicken})")
+            self.logger.debug(f"No thickening applied (thicken={self.params.thicken})")
             return
         self.data = self._thicken_solid(self.data, self.params.thicken)
 
@@ -312,7 +312,7 @@ class FitPorosity(RichMixin, LoggerMixin, Clock):
     def upsample(self):
         """Upsample the image back to original resolution"""
         if self.params.down <= 1:
-            self.logger.info(f"No upsampling applied (down={self.params.down})")
+            self.logger.debug(f"No upsampling applied (down={self.params.down})")
             return
         self.data = self._upsample_nearest(self.data, self.params.down, target_shape=self.initial_shape)
 
@@ -321,7 +321,7 @@ class FitPorosity(RichMixin, LoggerMixin, Clock):
         ui = self.params.upsample_intermediate
         uf = self.params.upsample_final
         if ui is None or uf is None:
-            self.logger.info(f"No supersampling applied")
+            self.logger.debug(f"No supersampling applied")
             return
         self.logger.info(f"** SUPERSAMPLING **  High-quality upsampling via anti-aliasing:")
         self.logger.info(f"  Current shape: {self.data.shape}")
@@ -362,7 +362,7 @@ class FitPorosity(RichMixin, LoggerMixin, Clock):
         """Smooth the image at full resolution"""
         iters = self.params.final_smooth_iters
         if iters <= 0:
-            self.logger.info(f"No final smoothing applied (final_smooth_iters={iters})")
+            self.logger.debug(f"No final smoothing applied (final_smooth_iters={iters})")
             return
 
         sigma = self.params.final_smooth_sigma
@@ -443,7 +443,7 @@ class FitPorosity(RichMixin, LoggerMixin, Clock):
     def majority_filter(self):
         """Apply majority filter to the image"""
         if self.params.majority_filter <= 0:
-            self.logger.info(f"No majority filtering applied (majority_filter={self.params.majority_filter})")
+            self.logger.debug(f"No majority filtering applied (majority_filter={self.params.majority_filter})")
             return
 
         arr = self.data.copy()
@@ -464,7 +464,7 @@ class FitPorosity(RichMixin, LoggerMixin, Clock):
         xy_only = self.params.pad_xy_only
 
         if thickness == 0:
-            self.logger.info(f"No padding applied (pad={thickness})")
+            self.logger.debug(f"No padding applied (pad={thickness})")
             self.geom_slice = (slice(None), slice(None), slice(None))
             return
 
@@ -508,7 +508,7 @@ class FitPorosity(RichMixin, LoggerMixin, Clock):
     def adjust_porosity_post(self):
         """Adjust the porosity of the image after processing"""
         if self.params.porosity is None or not self.params.adjust_porosity_post:
-            self.logger.info(f"No post-processing porosity adjustment applied.")
+            self.logger.debug(f"No post-processing porosity adjustment applied.")
             return
 
         target = self.params.porosity
@@ -616,7 +616,7 @@ class FitPorosity(RichMixin, LoggerMixin, Clock):
             'remaining_isolated_voxels': self.remaining_isolated_voxels,
         }
 
-        fpath = os.path.join(self.root_dir, 'params_info.json')
+        fpath = os.path.join(self.root_dir, 'output_params.json')
         self.logger.info(f"Saving porosity information to: {fpath}")
         with open(fpath, 'w') as f:
             json.dump(dct, f, indent=4)

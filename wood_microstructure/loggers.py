@@ -17,6 +17,7 @@ class LoggerMixin:
     def __init__(self, *args, outdir: str = None, **kwargs):
         self.init_outdir(outdir)
         self.init_logging()
+        self.handler_level = logging.DEBUG
         super().__init__(*args, **kwargs)
 
     def init_logging(self):
@@ -75,6 +76,7 @@ class LoggerMixin:
 
     def set_console_level(self, level: int):
         """Set the console logging level"""
+        self.handler_level = level
         for handler in self.logger.handlers:
             if isinstance(handler, RichHandler):
                 handler.setLevel(level)

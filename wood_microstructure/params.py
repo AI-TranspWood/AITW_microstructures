@@ -116,6 +116,9 @@ class JsonParams:
                 'panel': group,
             }
 
+            if 'flag_value' in metadata:
+                kwargs['flag_value'] = metadata['flag_value']
+
             func = click.option(decl, **kwargs)(func)
 
         func = click.option(
@@ -194,17 +197,21 @@ class BaseParams(JsonParams):
         }
     )
 
-    fit_porosity: str = field(
+    fit_porosity: bool = field(
+        default=False,
+        metadata={
+            'help': 'Perform post-processing to fit porosity on the final volume data',
+            'group': 'Post-processing Options',
+        }
+    )
+    fit_porosity_config: str = field(
         default=None,
         metadata={
-            'help': (
-                'Files with parameters to automatically run the `fit_porosity` post-processing step after generation.'
-            ),
+            'help': 'Path to file with parameters for fitting porosity',
             'group': 'Post-processing Options',
             'file': True,
         }
     )
-
     # Not user defined
     neighbor_local = np.array([[-1, 0, 1, 0], [0, -1, 0, 1]], dtype=int)  # d-indices of the neighbor grid nodes
 
@@ -321,6 +328,14 @@ class BaseParams(JsonParams):
         if self._num_grid_nodes is None:
             self._num_grid_nodes = self.x_grid.size()
         return self._num_grid_nodes
+
+    @property
+    def fit_porosity_params(self):
+        if self.fit_porosity_config is None:
+            return {}
+        with open(self.fit_porosity_config, 'r') as f:
+            data = json.load(f)
+        return data
 
     def _to_json(self, data: dict) -> dict:
         """Convert the parameters to a JSON serializable dictionary"""
