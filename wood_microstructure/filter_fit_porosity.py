@@ -42,7 +42,7 @@ class FitPorosity(RichMixin, LoggerMixin, Clock):
         """Initialize parameters"""
         self.params = params
 
-        save_param_file = os.path.join(self.root_dir, 'porosity_params.json')
+        save_param_file = os.path.join(self.root_dir, 'params.json')
         self.params.to_json(save_param_file)
 
         self.data = myio.read_volume(self.params.input_file).astype(np.float32)

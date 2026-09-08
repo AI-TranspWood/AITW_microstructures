@@ -5,8 +5,8 @@ import sys
 import nrrd
 import numpy as np
 
-from wood_microstructure.myio import read_volume, write_volume
-
+from ..myio import read_volume, write_volume
+from ..params import FitPorosityParams
 from .main import click, postproc
 
 verbose_map = {
@@ -72,23 +72,35 @@ def plot_volume(input_file, threshold):
     mlab.show()
 
 @postproc.command()
-@click.argument('json_file', required=False, type=click.Path(exists=True))
-@click.option('--input_file', type=click.Path(exists=True), help='Input volume file (optional)')
+@click.pass_context
 @click.option('--output_dir', type=click.Path(), help='Output directory')
 @click.option('-v', '--verbose', help='Verbose output', count=True)
-def filter_porosity(json_file, input_file, output_dir, verbose) -> None:
-    """Filter microstructure JSON files based on porosity."""
+@FitPorosityParams.to_click_options
+def filter_porosity(ctx, config_file, output_dir, verbose) -> None:
+    """Geometry filter for OpenLB interpolated boundary conditions.
+
+    \b
+    Features:
+    - SDF-based porosity control: --porosity with --sdf-sigma for "acid treatment" simulation
+    - Grayscale-aware processing: treats raw intensity as continuous density field
+    - Downsampling and smoothing: efficient multi-resolution processing
+    - Supersampling: high-quality upsampling via anti-aliasing
+    - Padding/cropping: add pore space or crop geometry
+    - Validation: checks for isolated voxels and geometry quality
+    Binary convention: 0 = pore, 255 = solid
+    """
     from wood_microstructure.filter_fit_porosity import FitPorosity
 
     loglevel = verbose_map.get(verbose, logging.DEBUG)
 
     data = {}
-    if json_file:
-        with open(json_file, 'r') as f:
+    if config_file:
+        with open(config_file, 'r') as f:
             data = json.load(f)
 
-    if input_file:
-        data['input_file'] = input_file
+    overrides = ctx.obj.get('override_params', {})
+    if overrides:
+        data.update(overrides)
 
     FitPorosity.run_from_dict(data, output_dir=output_dir, loglevel=loglevel)
 

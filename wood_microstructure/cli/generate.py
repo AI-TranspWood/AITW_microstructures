@@ -4,6 +4,7 @@ import multiprocessing as mp
 
 from .. import BirchMicrostructure, SpruceMicrostructure
 from ..microstructure import WoodMicrostructure
+from ..params import BaseParams
 from .main import click, wood_microstructure
 
 verbose_map = {
@@ -18,8 +19,9 @@ wood_type_map: dict[str, WoodMicrostructure] = {
 }
 
 @wood_microstructure.command()
+@click.pass_context
 @click.argument('wood_type', required=True, type=click.Choice(['spruce', 'birch'], case_sensitive=False))
-@click.argument('json_file', required=True, type=click.Path(exists=True))
+# @click.option('--json-file', type=click.Path(exists=True), help='Path to JSON file with microstructure parameters')
 @click.option('--output_dir', type=click.Path(), help='Output directory')
 @click.option(
     '--output-formats', type=str, required=False, default='tiff',
@@ -37,12 +39,13 @@ wood_type_map: dict[str, WoodMicrostructure] = {
     '--num-concurrent', type=int, default=1,
     help='Number of concurrent microstructure generations.'
 )
-@click.option('--surrogate/--no-surrogate', is_flag=True, default=False, help='Use surrogate model')
+@BaseParams.to_click_options
 def generate(
-        wood_type, json_file, output_dir,
+        ctx,
+        wood_type, config_file, output_dir,
         output_formats, verbose,
         num_concurrent, num_parallel,
-        surrogate
+        # surrogate,
     ) -> None:
     """Generate wood microstructure"""
     allowed_fmts = WoodMicrostructure.allowed_output_formats_2d
@@ -54,16 +57,19 @@ def generate(
 
     loglevel = verbose_map.get(verbose, logging.DEBUG)
 
-    with open(json_file, 'r') as f:
-        data = json.load(f)
+    data = {}
+    if config_file:
+        with open(config_file, 'r') as f:
+            data = json.load(f)
     if isinstance(data, dict):
         data = [data]
 
-    args = [(d, output_dir, output_formats, loglevel, num_parallel) for d in data]
+    overrides = ctx.obj.get('override_params', {})
+    if overrides:
+        for dct in data:
+            dct.update(overrides)
 
-    if surrogate:
-        for arg in args:
-            arg[0]['surrogate'] = True
+    args = [(d, output_dir, output_formats, loglevel, num_parallel) for d in data]
 
     if num_concurrent > 1:
         with mp.Pool(num_concurrent) as pool:

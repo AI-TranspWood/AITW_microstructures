@@ -1,15 +1,20 @@
 """Input paramemters"""
 import json
-from dataclasses import dataclass
-from typing import Self
+from collections.abc import Callable
+from copy import copy
+from dataclasses import Field, dataclass, field, fields
+from typing import ClassVar, Self
 
 import numpy as np
 import numpy.typing as npt
+import rich_click as click
+from click.core import ParameterSource
 
 
+@dataclass
 class JsonParams:
-    params_map: dict[str, str] = {}
-    post_set: list[str] = []
+    params_map: ClassVar[dict[str, str]] = {}
+    post_set: ClassVar[list[str]] = []
 
     def _to_json(self, data: dict) -> dict:
         """Convert the parameters to a JSON serializable dictionary"""
@@ -50,51 +55,140 @@ class JsonParams:
             setattr(res, k, v)
         return res
 
+    @classmethod
+    def to_click_options(cls, func: Callable) -> Callable:
+        """Decorator to add click options for the parameters to a click command"""
+        name_map = {}
+        has_overrides = False
+
+        OVERRIDE_GROUP = 'Override Input Parameters'
+
+        def callback(ctx: click.Context, param: click.Parameter, value):
+            ctx.ensure_object(dict)
+            source = ctx.get_parameter_source(param.name)
+            if source == ParameterSource.DEFAULT:
+                return
+            name = name_map.get(param.name, param.name)
+            overrides = ctx.obj.setdefault('override_params', {})
+            overrides[name] = value
+
+        for fld in fields(cls)[::-1]:
+            metadata = getattr(fld, 'metadata', {})
+            if not fld.init:
+                continue
+            if fld.name.startswith('_'):
+                continue
+            if fld.type not in (int, float, str, bool):
+                continue
+
+            typ = fld.type
+            if typ in (int, float):
+                min_val = metadata.get('min', None)
+                max_val = metadata.get('max', None)
+                if min_val is not None or max_val is not None:
+                    cls_typ = click.FloatRange if typ == float else click.IntRange
+                    typ = cls_typ(min=min_val, max=max_val)
+
+            expose = metadata.get('expose_value', False)
+            # prefix = '--param-' if not expose else '--'
+            prefix = '--'
+
+            decl = f'{prefix}{fld.name}'
+            if fld.type == bool:
+                decl = f'{prefix}{fld.name}/{prefix}no-{fld.name}'
+            name_map[f'param_{fld.name}'] = fld.name
+
+            group = metadata.get('group', OVERRIDE_GROUP)
+            if group == OVERRIDE_GROUP:
+                has_overrides = True
+
+            kwargs = {
+                'type': typ,
+                'is_flag': fld.type == bool,
+                'required': False,
+                'expose_value': expose,
+                'callback': callback,
+                'help': metadata.get('help', None),
+                'panel': group,
+            }
+
+            func = click.option(decl, **kwargs)(func)
+
+        func = click.option(
+            '--config-file', type=click.Path(exists=True), help='Path to file with parameters'
+        )(func)
+
+        if has_overrides:
+            func = click.option_panel(OVERRIDE_GROUP)(func)
+        func = click.option_panel('Options')(func)
+
+        return func
+
 @dataclass
 class BaseParams(JsonParams):
     """Base class for parameters"""
-    period_parameter: int  # This parameter is related to the period of the year ring size
+    # period_parameter: int  # This parameter is related to the period of the year ring size
+    period_parameter: int = field(metadata={'help': 'This parameter is related to the period of the year ring size'})
 
-    cell_r: float  # The grid distance for the nodes we generated. In Unit of voxels.
-    cell_length: float  # Average fiber length
-    cell_length_variance: float  # Standard deviation of fiber length
-    cell_wall_thick: float  # Cell wall thickness
-    cell_end_thick: int  # End of cell wall thickness along L direction
+    cell_r: float = field(metadata={'help': 'The grid distance for the nodes we generated. In Unit of voxels.'})
+    cell_length: float = field(metadata={'help': 'Average fiber length'})
+    cell_length_variance: float = field(metadata={'help': 'Standard deviation of fiber length'})
+    cell_wall_thick: float = field(metadata={'help': 'Cell wall thickness'})
+    cell_end_thick: int = field(metadata={'help': 'End of cell wall thickness along L direction'})
 
-    ray_height: float  # The width of the ray cell
-    ray_space: float  # The space between ray cell along T direction. The distance is raySpace*cellR
-    ray_cell_length: float  # Ray cell length along radial direction
-    ray_cell_variance: float  # Ray cell length deviation along radial direction
-    ray_cell_num: float  # Ray cell count in a group
-    ray_cell_num_std: float  # Ray cell count in a group
+    ray_height: float = field(metadata={'help': 'The width of the ray cell'})
+    ray_space: float = field(
+        metadata={'help': 'The space between ray cell along T direction. The distance is raySpace*cellR'}
+    )
+    ray_cell_length: float = field(metadata={'help': 'Ray cell length along radial direction'})
+    ray_cell_variance: float = field(metadata={'help': 'Ray cell length deviation along radial direction'})
+    ray_cell_num: float = field(metadata={'help': 'Ray cell count in a group'})
+    ray_cell_num_std: float = field(metadata={'help': 'Ray cell count in a group'})
 
-    vessel_length: float  # Average vessel length
-    vessel_length_variance: float  # Standard deviation of fiber length
-    vessel_thicker: int  # Assume vessel is thicker than ray cells
-    vessel_count: int  # This number is used to control the vessel number and distribution.
+    vessel_length: float = field(metadata={'help': 'Average vessel length'})
+    vessel_length_variance: float = field(metadata={'help': 'Standard deviation of fiber length'})
+    vessel_thicker: int = field(metadata={'help': 'Assume vessel is thicker than ray cells'})
+    vessel_count: int = field(metadata={'help': 'This number is used to control the vessel number and distribution.'})
 
-    is_exist_vessel: bool = True  # Whether to generate vessel cells
-    is_exist_ray_cell: bool = True  # Whether to generate ray cells
+    is_exist_vessel: bool = field(default=True, metadata={'help': 'Whether to generate vessel cells'})
+    is_exist_ray_cell: bool = field(default=True, metadata={'help': 'Whether to generate ray cells'})
 
-    random_seed: int = 42  # Random seed initialization for reproducibility
+    random_seed: int = field(default=42, metadata={'help': 'Random seed initialization for reproducibility'})
 
-    size_volume: tuple[int, int, int] = (500, 500, 200)  # The size of the volume to be generated
-    extra_size: tuple[int, int, int] = (150, 200, 100)  # Extra size for the enlarged image
-    slice_interest_space: int = 100  # We generate one slice every XXX slices to add random noise before interpolation.
+    size_volume: tuple[int, int, int] = field(
+        default=(500, 500, 200),
+        metadata={'help': 'The size of the volume to be generated'}
+    )
+    extra_size: tuple[int, int, int] = field(
+        default=(150, 200, 100),
+        metadata={'help': 'Extra size for the enlarged image'}
+    )
+    slice_interest_space: int = field(
+        default=100,
+        metadata={'help': 'We generate one slice every XXX slices to add random noise before interpolation.'}
+    )
 
-    apply_local_deform: bool = True  # Whether to apply local deformation
-    apply_global_deform: bool = True  # Whether to apply global deformation
+    apply_local_deform: bool = field(default=True, metadata={'help': 'Whether to apply local deformation'})
+    apply_global_deform: bool = field(default=True, metadata={'help': 'Whether to apply global deformation'})
 
-    save_slices_as_2d: bool = True
-    save_volume_as_3d: bool = True
-    save_volume_format: str = 'nrrd'
-    save_local_dist: bool = True
-    save_global_dist: bool = True
-    # write_local_deform_data: bool = True
-    # write_global_deform_data: bool = False
+    save_slices_as_2d: bool = field(default=True, metadata={'help': 'Whether to save slices as 2D images'})
+    save_volume_as_3d: bool = field(default=True, metadata={'help': 'Whether to save volume as 3D image'})
+    save_volume_format: str = field(default='nrrd', metadata={'help': 'Format to save volume data (e.g., nrrd, npy)'})
+    save_local_dist: bool = field(default=True, metadata={'help': 'Whether to save local deformation data'})
+    save_global_dist: bool = field(default=True, metadata={'help': 'Whether to save global deformation data'})
 
-    surrogate: bool = False  # Whether to use surrogate model for local deformation
-    binarize_threshold: int = None  # Threshold for binarization of the final volume data. If None, no bin is applied.
+    surrogate: bool = field(
+        default=False,
+        metadata={
+            'help': 'Whether to use surrogate model for local deformation',
+        },
+    )
+    binarize_threshold: int = field(
+        default=None, metadata={
+            'help': 'Threshold for binarization of the final volume data. If None, no bin is applied.',
+            'min': 0, 'max': 255
+        }
+    )
 
     # Not user defined
     neighbor_local = np.array([[-1, 0, 1, 0], [0, -1, 0, 1]], dtype=int)  # d-indices of the neighbor grid nodes
@@ -221,85 +315,177 @@ class BaseParams(JsonParams):
             data['saveSlice'] = [s + 1 for s in self.save_slice]
         return data
 
+def with_default(field_name: str, default, **kwargs) -> Field:
+    """Return a new field of `BaseParams` with the default value replaced"""
+    fld: Field = BaseParams.__dataclass_fields__[field_name]
+    new = copy(fld)
+    new.default = default
+    for key, value in kwargs.items():
+        setattr(new, key, value)
+    return new
+
 @dataclass
 class BirchParams(BaseParams):
     """Define the parameters for birch"""
-    period_parameter: int = 0
+    period_parameter: int = with_default('period_parameter', default=0)
 
-    cell_r: float = 14.5
-    cell_length: float = 2341
-    cell_length_variance: float = 581
-    cell_wall_thick: float = 2
-    cell_end_thick: int = 4
+    cell_r: float = with_default('cell_r', default=14.5)
+    cell_length: float = with_default('cell_length', default=2341)
+    cell_length_variance: float = with_default('cell_length_variance', default=581)
+    cell_wall_thick: float = with_default('cell_wall_thick', default=2)
+    cell_end_thick: int = with_default('cell_end_thick', default=4)
 
-    ray_height: float = 42
-    ray_space: float = 20
-    ray_cell_length: float = 62
-    ray_cell_variance: float = 15
-    ray_cell_num: float = 11.33
-    ray_cell_num_std: float = 3.39
+    ray_height: float = with_default('ray_height', default=42)
+    ray_space: float = with_default('ray_space', default=20)
+    ray_cell_length: float = with_default('ray_cell_length', default=62)
+    ray_cell_variance: float = with_default('ray_cell_variance', default=15)
+    ray_cell_num: float = with_default('ray_cell_num', default=11.33)
+    ray_cell_num_std: float = with_default('ray_cell_num_std', default=3.39)
 
-    vessel_length: float = 780
-    vessel_length_variance: float = 195
-    vessel_thicker: int = 1
-    vessel_count: int = 50
+    vessel_length: float = with_default('vessel_length', default=780)
+    vessel_length_variance: float = with_default('vessel_length_variance', default=195)
+    vessel_thicker: int = with_default('vessel_thicker', default=1)
+    vessel_count: int = with_default('vessel_count', default=50)
 
-    is_exist_vessel: bool = True
-    is_exist_ray_cell: bool = True
+    is_exist_vessel: bool = with_default('is_exist_vessel', default=True)
+    is_exist_ray_cell: bool = with_default('is_exist_ray_cell', default=True)
 
 
 @dataclass
 class SpruceParams(BaseParams):
     """Define the parameters for spruce"""
-    period_parameter: int = 1000
+    period_parameter: int = with_default('period_parameter', default=1000)
 
-    cell_r: float = 14.5
-    cell_length: float = 4877
-    cell_length_variance: float = 1219
-    cell_wall_thick: float = 3
-    cell_end_thick: int = 2
+    cell_r: float = with_default('cell_r', default=14.5)
+    cell_length: float = with_default('cell_length', default=4877)
+    cell_length_variance: float = with_default('cell_length_variance', default=1219)
+    cell_wall_thick: float = with_default('cell_wall_thick', default=3)
+    cell_end_thick: int = with_default('cell_end_thick', default=2)
 
-    ray_height: float = 40
-    ray_space: float = 0
-    ray_cell_length: float = 149.4
-    ray_cell_variance: float = 38.5
-    ray_cell_num: float = 8.44
-    ray_cell_num_std: float = 4.39
+    ray_height: float = with_default('ray_height', default=40)
+    ray_space: float = with_default('ray_space', default=0)
+    ray_cell_length: float = with_default('ray_cell_length', default=149.4)
+    ray_cell_variance: float = with_default('ray_cell_variance', default=38.5)
+    ray_cell_num: float = with_default('ray_cell_num', default=8.44)
+    ray_cell_num_std: float = with_default('ray_cell_num_std', default=4.39)
 
-    vessel_length: float = 4877
-    vessel_length_variance: float = 1219
-    vessel_thicker: int = 0
-    vessel_count: int = 0
+    vessel_length: float = with_default('vessel_length', default=4877)
+    vessel_length_variance: float = with_default('vessel_length_variance', default=1219)
+    vessel_thicker: int = with_default('vessel_thicker', default=0)
+    vessel_count: int = with_default('vessel_count', default=0)
 
-    is_exist_vessel: bool = True
-    is_exist_ray_cell: bool = True
+    is_exist_vessel: bool = with_default('is_exist_vessel', default=True)
+    is_exist_ray_cell: bool = with_default('is_exist_ray_cell', default=True)
 
 @dataclass
 class FitPorosityParams(JsonParams):
     """Define the parameters for fitting porosity"""
-    input_file: str = None  # Input file path to a volume data file.
+    input_file: str = field(
+        default=None,
+        metadata={
+            'help': 'Input file path to a volume data file.',
+            'group': 'Options',
+            # 'expose_value': True
+        }
+    )
 
-    threshold: float = 127  # Threshold for binarization of the final volume data. If None, no bin is applied.
-    solid_is_high: bool = True  # Whether the solid part is dark or light in the image.
-                              # If True, the solid part is dark and the void part is light.
-                              # If False, the solid part is light and the void part is dark.
-    down: int = 2  # Downsample factor (1=no downsampling)
+    threshold: float = field(
+        default=127,
+        metadata={
+            'help': 'Threshold for binarization of the final volume data. If None, no bin is applied.',
+            'min': 0, 'max': 255,
+        }
+    )
+    solid_is_high: bool = field(
+        default=True,
+        metadata={'help': 'Whether the solid part is dark or light in the image. True=solid is light.'}
+    )
+    down: int = field(
+        default=2,
+        metadata={
+            'help': 'Downsample factor (1=no downsampling)',
+            'min': 1,
+        }
+    )
 
-    smooth_low_iters: int = 0  # Number of iterations for low-pass smoothing. If <= 0, no smoothing is applied.
-    smooth_sigma: float = 0.6  # Sigma for Gaussian smoothing. If <= 0, no smoothing is applied.
+    smooth_low_iters: int = field(
+        default=0, metadata={
+            'help': 'Number of iterations for low-pass smoothing. If <= 0, no smoothing is applied.',
+            'min': 0,
+        }
+    )
+    smooth_sigma: float = field(
+        default=0.6, metadata={
+            'help': 'Sigma for Gaussian smoothing. If <= 0, no smoothing is applied.',
+            'min': 0,
+        }
+    )
 
-    thicken: int = 0  # Dilate solid by N voxels (thicken walls, narrow throats)
-    final_smooth_iters: int = 0  # Number of iterations for final low-pass smoothing. If <= 0, no smoothing is applied.
-    final_smooth_sigma: float = 0.5  # Sigma for final Gaussian smoothing. If <= 0, no smoothing is applied.
+    thicken: int = field(default=0, metadata={'help': 'Dilate solid by N voxels (thicken walls, narrow throats)'})
+    final_smooth_iters: int = field(
+        default=0,
+        metadata={
+            'help': 'Number of iterations for final low-pass smoothing. If <= 0, no smoothing is applied.',
+            'min': 0,
+        }
+    )
+    final_smooth_sigma: float = field(
+        default=0.5,
+        metadata={
+            'help': 'Sigma for final Gaussian smoothing. If <= 0, no smoothing is applied.',
+            'min': 0,
+        }
+    )
 
-    upsample_intermediate: float = None  # Supersampling: first upsample by this factor (e.g., 3)
-    upsample_final: float = None  # Supersampling: then downsample to this net factor (e.g., 2). Creates smoother upsampling via anti-aliasing.
+    upsample_intermediate: float = field(
+        default=None, metadata={'help': 'Supersampling: first upsample by this factor (e.g., 3)'}
+    )
+    upsample_final: float = field(
+        default=None,
+        metadata={
+            'help': (
+                'Supersampling: then downsample to this net factor (e.g., 2). '
+                'Creates smoother upsampling via anti-aliasing.'
+            )
+        }
+    )
 
-    pad: int = 0  # Add N voxels of pore padding (positive) or crop N voxels (negative). Example: --pad 10 adds padding, --pad -5 crops 5 voxels from edges.
-    pad_xy_only: bool = False
+    pad: int = field(
+        default=0,
+        metadata={
+            'help': (
+                'Add N voxels of pore padding (positive) or crop N voxels (negative). '
+                'Example: `pad=10` adds padding, `pad=-5` crops 5 voxels from edges.'
+            )
+        }
+    )
+    pad_xy_only: bool = field(default=False, metadata={'help': 'Only apply padding in XY directions, not Z.'})
 
-    porosity: float = None  # Target porosity [0, 1]. Uses SDF threshold search on raw grayscale. Pass 'None' or omit to disable (use --threshold instead).
-    sdf_sigma: float = 0.5  # SDF Gaussian blur sigma (higher = more boundary smearing)
-    adjust_porosity_post: bool = False  # Fine-tune porosity after processing via post-processing SDF adjustment
+    porosity: float = field(
+        default=None,
+        metadata={
+            'help': (
+                'Target porosity [0, 1]. Uses SDF threshold search on raw grayscale. '
+                'Pass \'None\' or omit to disable (use `threshold` instead).'
+            ),
+            'min': 0, 'max': 1,
+        }
+    )
+    sdf_sigma: float = field(
+        default=0.5,
+        metadata={
+            'help': 'SDF Gaussian blur sigma (higher = more boundary smearing)',
+            'min': 0,
+        },
+    )
+    adjust_porosity_post: bool = field(
+        default=False, metadata={'help': 'Fine-tune porosity after processing via post-processing SDF adjustment'}
+    )
 
-    majority_filter: int = 1  # Remove thin protrusions (iterations). 0=off, 2-3 for aggressive filtering.
+    majority_filter: int = field(
+        default=1,
+        metadata={
+            'help': 'Remove thin protrusions (iterations). 0=off, 2-3 for aggressive filtering.',
+            'min': 0,
+        }
+    )
