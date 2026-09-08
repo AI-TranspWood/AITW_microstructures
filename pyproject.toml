@@ -41,8 +41,7 @@ surrogate = [
     "tqdm",
 ]
 gpu_griddata = [
-    "torch-geometric",
-    "torch-cluster"
+    "cupy",
 ]
 utils = [
     "matplotlib",

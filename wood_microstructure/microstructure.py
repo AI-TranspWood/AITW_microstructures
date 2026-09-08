@@ -24,12 +24,6 @@ from .params import BaseParams
 from .progress import RichMixin
 
 try:
-    from torch_geometric.nn.unpool import knn_interpolate
-    HAVE_TORCH_GEOMETRIC = True
-except ImportError:
-    HAVE_TORCH_GEOMETRIC = False
-
-try:
     import cupy
     from cupyx.scipy.interpolate import \
         LinearNDInterpolator as LinearNDInterpolator_CUPY
@@ -1222,9 +1216,7 @@ class WoodMicrostructure(RichMixin, LoggerMixin, Clock, ABC):
         v = self.v
 
         if self.surrogate is None or self.device is None:
-            if self.device and self.torch and HAVE_TORCH_GEOMETRIC:
-                self._apply_local_deformation_gpu_knn(vol_img_ref, u, v)
-            elif HAVE_CUPY and cupy.cuda.runtime.getDeviceCount() > 0:
+            f HAVE_CUPY and cupy.cuda.runtime.getDeviceCount() > 0:
                 self._apply_local_deformation_gpu_cupy(vol_img_ref, u, v)
             else:
                 self._apply_local_deformation(vol_img_ref, u, v)
@@ -1285,44 +1277,6 @@ class WoodMicrostructure(RichMixin, LoggerMixin, Clock, ABC):
             _deform_slice(arr_idx, grid_idx)
 
         return vol_img_ref
-
-    def _apply_local_deformation_gpu_knn(self, vol_img_ref: npt.NDArray, u: npt.NDArray, v: npt.NDArray) -> npt.NDArray:
-        """Apply the deformation to the volume image using GPU acceleration"""
-        sie_x, sie_y, _ = self.params.size_im_enlarge
-        torch = self.torch
-        x_grid, y_grid = torch.meshgrid(
-            torch.arange(sie_x),
-            torch.arange(sie_y),
-            indexing='ij',
-        )
-        x_grid = x_grid.float().to(self.device).reshape(-1)
-        y_grid = y_grid.float().to(self.device).reshape(-1)
-        x_interp = x_grid + torch.from_numpy(u.flatten()).float().to(self.device)
-
-        interp_pts = torch.stack([x_grid, y_grid], dim=-1)
-
-        for array_idx, grid_idx in self.track_step(
-                list(enumerate(self.params.save_slice)),
-                description='[GPU kNN] Applying local deformation',
-            ):
-            self.logger.debug('[GPU kNN] Applying distortion for slice %d', grid_idx)
-            v_slice = v[..., array_idx] if self.params.is_exist_ray_cell else v
-            y_interp = y_grid + torch.from_numpy(v_slice.flatten()).float().to(self.device)
-
-            x_interp_torch = x_interp.flatten()
-            y_interp_torch = y_interp.flatten()
-            z_interp_torch = torch.from_numpy(vol_img_ref[..., array_idx].flatten()).float().to(self.device)
-
-            points = torch.stack([x_interp_torch, y_interp_torch], dim=-1)
-            value = z_interp_torch.unsqueeze(-1)  # knn_interpolate expects (N, C) shape for value
-            img_interp_torch = knn_interpolate(
-                value, points, interp_pts, k=3
-            )
-
-            img_interp = img_interp_torch.cpu().numpy()
-            img_interp = img_interp.reshape((sie_x, sie_y))
-            img_interp = np.clip(img_interp, 0, 255).astype(np.uint8)
-            vol_img_ref[..., array_idx] = img_interp
 
     def _apply_local_deformation(self, vol_img_ref: npt.NDArray, u: npt.NDArray, v: npt.NDArray) -> npt.NDArray:
         """Apply the deformation to the volume image"""
