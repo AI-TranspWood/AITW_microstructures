@@ -7,5 +7,5 @@ def binarize_volume(arr: npt.NDArray, threshold: float = None) -> npt.NDArray:
     if threshold is None:
         return arr
 
-    res = np.where(arr < threshold, 0, 1).astype(np.uint8)
+    res = np.where(arr < threshold, 0, 255).astype(np.uint8)
     return res

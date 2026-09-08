@@ -190,7 +190,7 @@ class FitPorosity(RichMixin, LoggerMixin, Clock):
                 self.data = self.adjust_porosity_sdf()
             else:
                 self.logger.info(f"Binarizing grayscale input using threshold: {self.params.threshold:.6f}")
-                self.data = utils.binarize_volume(self.data, threshold=self.params.threshold)
+                self.data = utils.binarize_volume(self.data, threshold=self.params.threshold) / 255.0
                 if not self.params.solid_is_high:
                     self.data = 1.0 - self.data
 
@@ -615,6 +615,8 @@ class FitPorosity(RichMixin, LoggerMixin, Clock):
             'final_porosity': final_porosity,
             'remaining_isolated_voxels': self.remaining_isolated_voxels,
         }
+
+        dct['target_porosity'] = self.params.porosity
 
         fpath = os.path.join(self.root_dir, 'output_params.json')
         self.logger.info(f"Saving porosity information to: {fpath}")
