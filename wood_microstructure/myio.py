@@ -81,14 +81,14 @@ def read_volume(fpath: str) -> npt.NDArray:
     """Read a volume from a file."""
     ext = os.path.splitext(fpath)[1][1:]  # Get the file extension without the dot
     if ext not in input_funcs:
-        raise ValueError(f"Unsupported file format: {ext}")
+        raise ValueError(f"Unsupported file format: {ext}. Supported formats: {list(input_funcs.keys())}")
     return input_funcs[ext](fpath)
 
 def write_volume(fpath: str, data: npt.NDArray):
     """Write a volume to a file."""
     ext = os.path.splitext(fpath)[1][1:]  # Get the file extension without the dot
     if ext not in output_funcs:
-        raise ValueError(f"Unsupported file format: {ext}")
+        raise ValueError(f"Unsupported file format: {ext}. Supported formats: {list(output_funcs.keys())}")
     output_funcs[ext](fpath, data)
 
 __all__ = [

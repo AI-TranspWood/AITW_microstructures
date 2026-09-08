@@ -59,9 +59,10 @@ class JsonParams:
     def to_click_options(cls, func: Callable) -> Callable:
         """Decorator to add click options for the parameters to a click command"""
         name_map = {}
-        has_overrides = False
 
         OVERRIDE_GROUP = 'Override Input Parameters'
+
+        groups = {'Options'}
 
         def callback(ctx: click.Context, param: click.Parameter, value):
             ctx.ensure_object(dict)
@@ -88,6 +89,9 @@ class JsonParams:
                 if min_val is not None or max_val is not None:
                     cls_typ = click.FloatRange if typ == float else click.IntRange
                     typ = cls_typ(min=min_val, max=max_val)
+            elif typ == str:
+                if metadata.get('file', False):
+                    typ = click.Path(exists=True, dir_okay=False, readable=True, resolve_path=True)
 
             expose = metadata.get('expose_value', False)
             # prefix = '--param-' if not expose else '--'
@@ -99,8 +103,8 @@ class JsonParams:
             name_map[f'param_{fld.name}'] = fld.name
 
             group = metadata.get('group', OVERRIDE_GROUP)
-            if group == OVERRIDE_GROUP:
-                has_overrides = True
+
+            groups.add(group)
 
             kwargs = {
                 'type': typ,
@@ -118,9 +122,8 @@ class JsonParams:
             '--config-file', type=click.Path(exists=True), help='Path to file with parameters'
         )(func)
 
-        if has_overrides:
-            func = click.option_panel(OVERRIDE_GROUP)(func)
-        func = click.option_panel('Options')(func)
+        for group in sorted(groups, key=lambda x: (x != 'Options', x))[::-1]:
+            func = click.option_panel(group)(func)
 
         return func
 
@@ -186,7 +189,19 @@ class BaseParams(JsonParams):
     binarize_threshold: int = field(
         default=None, metadata={
             'help': 'Threshold for binarization of the final volume data. If None, no bin is applied.',
-            'min': 0, 'max': 255
+            'min': 0, 'max': 255,
+            'group': 'Post-processing Options',
+        }
+    )
+
+    fit_porosity: str = field(
+        default=None,
+        metadata={
+            'help': (
+                'Files with parameters to automatically run the `fit_porosity` post-processing step after generation.'
+            ),
+            'group': 'Post-processing Options',
+            'file': True,
         }
     )
 
@@ -386,6 +401,7 @@ class FitPorosityParams(JsonParams):
             'help': 'Input file path to a volume data file.',
             'group': 'Options',
             # 'expose_value': True
+            'file': True,
         }
     )
 
