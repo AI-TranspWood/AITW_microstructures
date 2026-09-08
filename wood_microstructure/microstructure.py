@@ -293,6 +293,13 @@ class WoodMicrostructure(RichMixin, LoggerMixin, Clock, ABC):
                 )
                 sys.exit(1)
 
+            if self.model_commit is None:
+                self.logger.error(
+                    'Model commit hash is not set. Cannot download surrogate model weights for `%s`.',
+                    cls_name
+                )
+                sys.exit(1)
+
             weight_file = pooch.retrieve(
                 MODEL_URL_TEMPLATE.format(model_name=cls_name, commit=self.model_commit),
                 known_hash=None,
