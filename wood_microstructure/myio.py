@@ -58,6 +58,7 @@ def output_vti(fpath: str, data: npt.NDArray):
     image_data.SetOrigin(0.0, 0.0, 0.0)
 
     vtk_array = numpy_support.numpy_to_vtk(data_flat, deep=True, array_type=vtk.VTK_FLOAT)
+    vtk_array.SetName('ImageFile')
     image_data.GetPointData().SetScalars(vtk_array)
 
     writer = vtk.vtkXMLImageDataWriter()
