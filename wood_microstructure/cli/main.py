@@ -1,4 +1,5 @@
 """Command line interface for wood_microstructure."""
+import os
 
 from trogon import tui
 
@@ -9,23 +10,19 @@ except ImportError:
     import click
     import click as original_click
 
-try:
-    import rich
-except ImportError:
-    pass
-else:
-    import multiprocessing
+import multiprocessing
 
-    from rich.traceback import install
-    install(
-        show_locals=True,
-        suppress=[rich, click, original_click, multiprocessing],
-    )
+import rich
+from rich.traceback import install
+
 
 @tui()
 @click.group()
 def wood_microstructure():
-    pass
+    install(
+        show_locals=os.getenv('WOOD_MS_DEBUG', '0').lower() in ('1', 'true', 'yes'),
+        suppress=[rich, click, original_click, multiprocessing],
+    )
 
 @wood_microstructure.group()
 def postproc():

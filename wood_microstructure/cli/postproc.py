@@ -1,41 +1,30 @@
-import os
+import json
+import logging
 import sys
 
 import nrrd
 import numpy as np
 
+from ..myio import read_volume, write_volume
+from ..params import FitPorosityParams
 from .main import click, postproc
 
+verbose_map = {
+    0: logging.WARNING,
+    1: logging.INFO,
+    2: logging.DEBUG,
+}
 
 @postproc.command()
 @click.argument('input_file', required=True, type=click.Path(exists=True))
-@click.option(
-    '--threshold',
-    type=click.IntRange(0, 255),
-    default=None,
-    help='Threshold value for binarization (0-255)',
-    )
-def volume_npy_to_nrrd(input_file, threshold):
-    """Convert a numpy volume file to nrrd format."""
-    dirname = os.path.dirname(input_file)
-    name, ext = os.path.splitext(os.path.basename(input_file))
-    outfile = os.path.join(dirname, f'{name}.nrrd')
-
-    data = np.ascontiguousarray(np.load(input_file))
+@click.argument('output_file', required=True, type=click.Path())
+def volume_convert_format(input_file, output_file):
+    """Convert a volume file between formats (npy, nrrd, vti)."""
+    data = read_volume(input_file)
     click.echo(f'Loaded volume data from `{input_file}` with shape {data.shape}')
 
-    if threshold is not None:
-        w = data > threshold
-        data[w] = 1
-        data[~w] = 0
-        click.echo(f'Binarized volume data with threshold {threshold}')
-
-    nrrd.write(
-        outfile,
-        data,
-        index_order='C',
-    )
-    click.echo(f'Saved nrrd file to `{outfile}`')
+    write_volume(output_file, data)
+    click.echo(f'Saved volume data to `{output_file}`')
 
 @postproc.command()
 @click.argument('input_file', required=True, type=click.Path(exists=True))
@@ -82,7 +71,42 @@ def plot_volume(input_file, threshold):
     mlab.axes()
     mlab.show()
 
+@postproc.command()
+@click.pass_context
+@click.option('--output_dir', type=click.Path(), help='Output directory')
+@click.option('-v', '--verbose', help='Verbose output', count=True)
+@FitPorosityParams.to_click_options
+def filter_porosity(ctx, config_file, output_dir, verbose) -> None:
+    """Geometry filter for OpenLB interpolated boundary conditions.
+
+    \b
+    Features:
+    - SDF-based porosity control: --porosity with --sdf-sigma for "acid treatment" simulation
+    - Grayscale-aware processing: treats raw intensity as continuous density field
+    - Downsampling and smoothing: efficient multi-resolution processing
+    - Supersampling: high-quality upsampling via anti-aliasing
+    - Padding/cropping: add pore space or crop geometry
+    - Validation: checks for isolated voxels and geometry quality
+    Binary convention: 0 = pore, 255 = solid
+    """
+    from wood_microstructure.filter_fit_porosity import FitPorosity
+
+    loglevel = verbose_map.get(verbose, logging.DEBUG)
+
+    data = {}
+    if config_file:
+        with open(config_file, 'r') as f:
+            data = json.load(f)
+
+    overrides = ctx.obj.get('override_params', {})
+    if overrides:
+        data.update(overrides)
+
+    FitPorosity.run_from_dict(data, output_dir=output_dir, loglevel=loglevel)
+
+
 __all__ = [
-    'volume_npy_to_nrrd',
+    'volume_convert_format',
     'plot_volume',
+    'filter_porosity',
 ]

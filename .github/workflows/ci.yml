@@ -67,15 +67,34 @@ jobs:
                 wood_ms --help
 
                 wood_ms generate birch --config-file examples/small.json --random_seed 123
-                [ -f SaveBirch_0/wood_microstructure.log ]
-                [ -f SaveBirch_0/params.json ]
-                [ -f SaveBirch_0/FinalVolume3D/FinalVolume.nrrd ]
-                grep -q 'Time report:' SaveBirch_0/wood_microstructure.log
-                grep -q '"random_seed": 123,' SaveBirch_0/params.json
+                [ -f SaveBirch_0/wood_microstructure.log ] || (
+                    echo "Birch generation failed. Log file not found." ; exit 1
+                )
+                [ -f SaveBirch_0/params.json ] || ( echo "Birch generation failed. Params file not found." ; exit 1 )
+                [ -f SaveBirch_0/FinalVolume3D/FinalVolume.nrrd ] || (
+                    echo "Birch generation failed. Final volume file not found." ; exit 1
+                )
+                grep -q 'Time report:' SaveBirch_0/wood_microstructure.log || (
+                    echo "Birch generation did not complete successfully" ; exit 1
+                )
+                grep -q '"random_seed": 123,' SaveBirch_0/params.json || (
+                    echo "Birch generation did not use the override random seed" ; exit 1
+                )
 
                 wood_ms generate spruce --config-file examples/small.json --random_seed 456
-                [ -f SaveSpruce_0/wood_microstructure.log ]
-                [ -f SaveSpruce_0/params.json ]
-                [ -f SaveSpruce_0/FinalVolume3D/FinalVolume.nrrd ]
-                grep -q 'Time report:' SaveSpruce_0/wood_microstructure.log
-                grep -q '"random_seed": 456,' SaveSpruce_0/params.json
+                [ -f SaveSpruce_0/wood_microstructure.log ] || (
+                    echo "Spruce generation failed. Log file not found." ; exit 1
+                )
+                [ -f SaveSpruce_0/params.json ] || ( echo "Spruce generation failed. Params file not found." ; exit 1 )
+                [ -f SaveSpruce_0/FinalVolume3D/FinalVolume.nrrd ] || (
+                    echo "Spruce generation failed. Final volume file not found." ; exit 1
+                )
+                grep -q 'Time report:' SaveSpruce_0/wood_microstructure.log || (
+                    echo "Spruce generation did not complete successfully" ; exit 1
+                )
+                grep -q '"random_seed": 456,' SaveSpruce_0/params.json || (
+                    echo "Spruce generation did not use the override random seed" ; exit 1
+                )
+
+                wood_ms postproc volume-convert-format SaveBirch_0/FinalVolume3D/FinalVolume.nrrd test.npy
+                [ -f test.npy ] || ( echo "Volume conversion failed" ; exit 1 )

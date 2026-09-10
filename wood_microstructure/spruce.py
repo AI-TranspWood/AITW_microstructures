@@ -19,7 +19,7 @@ class SpruceMicrostructure(WoodMicrostructure):
     ray_height_mod = 5
     skip_cell_thick_rescale = 1.5
 
-    def get_distortion_map(self) -> tuple[npt.NDArray, npt.NDArray]:
+    def _get_distortion_map(self) -> tuple[npt.NDArray, npt.NDArray]:
         """Generate the distortion map for early wood and late wood"""
         pparam = self.params.period_parameter
         cell_r = self.params.cell_r
@@ -60,7 +60,7 @@ class SpruceMicrostructure(WoodMicrostructure):
 
         return thick_all_valid_sub, compress_all_valid_sub
 
-    def get_grid_all(self, thick_all_valid_sub: npt.NDArray):
+    def _get_grid_all(self, thick_all_valid_sub: npt.NDArray):
         """Specify the location of grid nodes and the thickness (with disturbance)"""
         gx, gy = self.params.x_grid.shape
         gz = self.params.size_im_enlarge[2]
@@ -96,7 +96,7 @@ class SpruceMicrostructure(WoodMicrostructure):
         return x_grid_all, y_grid_all, thickness_all_ray, thickness_all_fiber
 
     @Clock.register(['ray_cell', 'indexes'])
-    def get_ray_cell_indexes(self) -> npt.NDArray:
+    def _get_ray_cell_indexes(self) -> npt.NDArray:
         """Get ray cell indexes"""
         ly = len(self.params.y_vector)
         ray_cell_x_ind_all = np.empty((1, 0))
@@ -105,7 +105,7 @@ class SpruceMicrostructure(WoodMicrostructure):
         return ray_cell_x_ind_all.astype(int)
 
     @Clock.register('vessels')
-    def generate_vessel_indexes(self, ray_cell_x_ind_all: npt.NDArray = None):
+    def _generate_vessel_indexes(self, ray_cell_x_ind_all: npt.NDArray = None):
         """Get vessels"""
         self.logger.info('=' * 80)
         self.logger.info('Generating vessels...')
@@ -121,15 +121,15 @@ class SpruceMicrostructure(WoodMicrostructure):
 
         return vessel_all.astype(int)
 
-    def get_indx_skip_all(self, vessel_all: npt.NDArray) -> npt.NDArray:
+    def _get_indx_skip_all(self, vessel_all: npt.NDArray) -> npt.NDArray:
         """Get the indexes of the grid nodes where fibers are not generated"""
         return np.empty((0, 6, 2), dtype=int)
 
-    def get_indx_ves_edges(self, vessel_all: npt.NDArray) -> npt.NDArray:
+    def _get_indx_ves_edges(self, vessel_all: npt.NDArray) -> npt.NDArray:
         """Get the indexes of the grid nodes at the edges of the vessels"""
         return np.empty((0, 6, 2), dtype=int)
 
-    def get_indx_vessel_cen(self, vessel_all: npt.NDArray) -> npt.NDArray:
+    def _get_indx_vessel_cen(self, vessel_all: npt.NDArray) -> npt.NDArray:
         """Get the indexes of the grid nodes where fibers are not generated"""
         return np.empty((0, 2), dtype=int)
 
@@ -143,13 +143,10 @@ class SpruceMicrostructure(WoodMicrostructure):
 
     def generate_large_fibers(
             self,
-            indx_vessel: npt.NDArray,
-            indx_vessel_cen: npt.NDArray,
-            # indx_skip_all: npt.NDArray,
-            input_volume: npt.NDArray
+            inplace: bool = True
         ) -> npt.NDArray:
         """Generate large fibers."""
-        return input_volume
+        return self.vol_img_ref if inplace else np.copy(self.vol_img_ref)
 
     def _generate_raycell_cell_r(self, interp1: npt.NDArray, interp2: npt.NDArray, dx: npt.NDArray, k: int):
         """Get the value of `cell_r` for `generate_raycell`"""
@@ -246,27 +243,26 @@ class SpruceMicrostructure(WoodMicrostructure):
 
         return u1, v1
 
+
     def _get_global_interp_grid(
             self,
-            x_grid: npt.NDArray, y_grid: npt.NDArray, z_grid: npt.NDArray,
+            x_grid: npt.NDArray, y_grid: npt.NDArray, slice_idx: int,
             u1: npt.NDArray, v1: npt.NDArray
         ) -> tuple[npt.NDArray, npt.NDArray, npt.NDArray]:
         """Get the interpolation grid for global deformation"""
         sie_x, sie_y, sie_z = self.params.size_im_enlarge
-
         # v_allz   = (x_grid-sizeImEnlarge(1)*2/5).^3/1e7/2+(y_grid-sizeImEnlarge(2)/2).*(z_grid-sizeImEnlarge(3)/2)/(10^4)/5;
         v_all_z = (
             (x_grid - sie_x * 2 / 5)**3 / 1e7 / 2 +
-            (y_grid - sie_y / 2) * (z_grid - sie_z / 2) / 1e4 / 5
+            (y_grid - sie_y / 2) * (slice_idx - sie_z / 2) / 1e4 / 5
         )
         # u_allz   = (y_grid-sizeImEnlarge(1)/3).^2/1e4/3+(x_grid-sizeImEnlarge(2)/3).*(z_grid-sizeImEnlarge(3)/3)/(10^4)/4;
         u_all_z = (
             (y_grid - sie_x / 3)**2 / 1e4 / 3 +
-            (x_grid - sie_y / 3) * (z_grid - sie_z / 3) / 1e4 / 4
-        ) + u1[..., np.newaxis]
+            (x_grid - sie_y / 3) * (slice_idx - sie_z / 3) / 1e4 / 4
+        ) + u1
 
         x_interp = x_grid - u_all_z
         y_interp = y_grid - v_all_z
-        z_interp = z_grid
 
-        return x_interp, y_interp, z_interp, u_all_z, v_all_z
+        return x_interp, y_interp, u_all_z, v_all_z

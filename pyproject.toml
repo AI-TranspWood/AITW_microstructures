@@ -37,10 +37,16 @@ Source = "https://github.com/AI-TranspWood/AITW_microstructures"
 [project.optional-dependencies]
 surrogate = [
     "torch",
+    "pooch",
+    "tqdm",
+]
+gpu_griddata = [
+    "cupy",
 ]
 utils = [
     "matplotlib",
     "mayavi",
+    "vtk",
 ]
 pre-commit = [
     "pre-commit",
