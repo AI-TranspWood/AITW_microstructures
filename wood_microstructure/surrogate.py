@@ -1,61 +1,62 @@
 import torch
 from torch import nn
 
+
 class U_Net(nn.Module):
     def __init__(self):
         super(U_Net, self).__init__()
 
-        self.conv1a = nn.Conv2d(in_channels=3, out_channels=64, kernel_size=(3,3), padding="same")
+        self.conv1a = nn.Conv2d(in_channels=3, out_channels=64, kernel_size=(3,3), padding='same')
         self.relu1a = nn.ReLU()
-        self.conv1b = nn.Conv2d(in_channels=64, out_channels=64, kernel_size=(3,3), padding="same")
+        self.conv1b = nn.Conv2d(in_channels=64, out_channels=64, kernel_size=(3,3), padding='same')
         self.relu1b = nn.ReLU()
         self.pool1 = nn.MaxPool2d(kernel_size=(2,2), stride=(2,2))
 
-        self.conv2a = nn.Conv2d(in_channels=64, out_channels=128, kernel_size=(3,3), padding="same")
+        self.conv2a = nn.Conv2d(in_channels=64, out_channels=128, kernel_size=(3,3), padding='same')
         self.relu2a = nn.ReLU()
-        self.conv2b = nn.Conv2d(in_channels=128, out_channels=128, kernel_size=(3,3), padding="same")
+        self.conv2b = nn.Conv2d(in_channels=128, out_channels=128, kernel_size=(3,3), padding='same')
         self.relu2b = nn.ReLU()
         self.pool2 = nn.MaxPool2d(kernel_size=(2,2), stride=(2,2))
 
-        self.conv3a = nn.Conv2d(in_channels=128, out_channels=256, kernel_size=(3,3), padding="same")
+        self.conv3a = nn.Conv2d(in_channels=128, out_channels=256, kernel_size=(3,3), padding='same')
         self.relu3a = nn.ReLU()
-        self.conv3b = nn.Conv2d(in_channels=256, out_channels=256, kernel_size=(3,3), padding="same")
+        self.conv3b = nn.Conv2d(in_channels=256, out_channels=256, kernel_size=(3,3), padding='same')
         self.relu3b = nn.ReLU()
         self.pool3 = nn.MaxPool2d(kernel_size=(2,2), stride=(2,2))
 
-        self.conv4a = nn.Conv2d(in_channels=256, out_channels=512, kernel_size=(3,3), padding="same")
+        self.conv4a = nn.Conv2d(in_channels=256, out_channels=512, kernel_size=(3,3), padding='same')
         self.relu4a = nn.ReLU()
-        self.conv4b = nn.Conv2d(in_channels=512, out_channels=512, kernel_size=(3,3), padding="same")
+        self.conv4b = nn.Conv2d(in_channels=512, out_channels=512, kernel_size=(3,3), padding='same')
         self.relu4b = nn.ReLU()
         self.pool4 = nn.MaxPool2d(kernel_size=(2,2), stride=(2,2))
 
-        self.conv5a = nn.Conv2d(in_channels=512, out_channels=1024, kernel_size=(3,3), padding="same")
+        self.conv5a = nn.Conv2d(in_channels=512, out_channels=1024, kernel_size=(3,3), padding='same')
         self.relu5a = nn.ReLU()
-        self.conv5b = nn.Conv2d(in_channels=1024, out_channels=1024, kernel_size=(3,3), padding="same")
+        self.conv5b = nn.Conv2d(in_channels=1024, out_channels=1024, kernel_size=(3,3), padding='same')
         self.relu5b = nn.ReLU()
 
         self.up6 = nn.ConvTranspose2d(in_channels=1024, out_channels=512, kernel_size=(2,2), stride=(2,2))
-        self.conv6a = nn.Conv2d(in_channels=1024, out_channels=512, kernel_size=(3,3), padding="same")
+        self.conv6a = nn.Conv2d(in_channels=1024, out_channels=512, kernel_size=(3,3), padding='same')
         self.relu6a = nn.ReLU()
-        self.conv6b = nn.Conv2d(in_channels=512, out_channels=512, kernel_size=(3,3), padding="same")
+        self.conv6b = nn.Conv2d(in_channels=512, out_channels=512, kernel_size=(3,3), padding='same')
         self.relu6b = nn.ReLU()
 
         self.up7 = nn.ConvTranspose2d(in_channels=512, out_channels=256, kernel_size=(2,2), stride=(2,2))
-        self.conv7a = nn.Conv2d(in_channels=512, out_channels=256, kernel_size=(3,3), padding="same")
+        self.conv7a = nn.Conv2d(in_channels=512, out_channels=256, kernel_size=(3,3), padding='same')
         self.relu7a = nn.ReLU()
-        self.conv7b = nn.Conv2d(in_channels=256, out_channels=256, kernel_size=(3,3), padding="same")
+        self.conv7b = nn.Conv2d(in_channels=256, out_channels=256, kernel_size=(3,3), padding='same')
         self.relu7b = nn.ReLU()
 
         self.up8 = nn.ConvTranspose2d(in_channels=256, out_channels=128, kernel_size=(2,2), stride=(2,2))
-        self.conv8a = nn.Conv2d(in_channels=256, out_channels=128, kernel_size=(3,3), padding="same")
+        self.conv8a = nn.Conv2d(in_channels=256, out_channels=128, kernel_size=(3,3), padding='same')
         self.relu8a = nn.ReLU()
-        self.conv8b = nn.Conv2d(in_channels=128, out_channels=128, kernel_size=(3,3), padding="same")
+        self.conv8b = nn.Conv2d(in_channels=128, out_channels=128, kernel_size=(3,3), padding='same')
         self.relu8b = nn.ReLU()
 
         self.up9 = nn.ConvTranspose2d(in_channels=128, out_channels=64, kernel_size=(2,2), stride=(2,2))
-        self.conv9a = nn.Conv2d(in_channels=128, out_channels=64, kernel_size=(3,3), padding="same")
+        self.conv9a = nn.Conv2d(in_channels=128, out_channels=64, kernel_size=(3,3), padding='same')
         self.relu9a = nn.ReLU()
-        self.conv9b = nn.Conv2d(in_channels=64, out_channels=1, kernel_size=(3,3), padding="same")
+        self.conv9b = nn.Conv2d(in_channels=64, out_channels=1, kernel_size=(3,3), padding='same')
 
         self.sigmoid10 = nn.Sigmoid()
 
