@@ -1,0 +1,29 @@
+[
+    {
+        "sizeVolume": [70, 70, 30],
+        "extra_size": [30, 30, 30],
+        "random_seed": 5,
+        "saveSlice": "all",
+        "cellR": 14,
+        "cellLength": 2339,
+        "cellLengthVariance": 580,
+        "rayCellLength": 61,
+        "rayCell_variance": 14,
+        "rayCellNum": 11.30,
+        "rayCellNumStd": 3.30,
+        "vesselLength": 779,
+        "vesselLengthVariance": 190,
+        "raywHeight": 40,
+        "raySpace": 19,
+        "isExistVessel": 1,
+        "isExistRayCell": 1,
+        "cellWallThick": 4,
+
+        "save_slices_as_2d": 1,
+        "save_volume_as_3d": 1,
+        "save_local_dist": 1,
+        "save_global_dist": 1,
+
+        "binarize_threshold": 128
+    }
+]
