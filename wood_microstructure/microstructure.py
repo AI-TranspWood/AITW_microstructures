@@ -15,6 +15,7 @@ from PIL import Image
 from scipy.interpolate import CubicSpline, RegularGridInterpolator, griddata
 
 from . import distortion as dist
+from . import myio
 from . import ray_cells as rcl
 from . import utils
 from .clocks import Clock
@@ -1557,12 +1558,7 @@ class WoodMicrostructure(RichMixin, LoggerMixin, Clock, ABC):
         _, ext = os.path.splitext(os.path.basename(filename))
         ext = ext.lower()
 
-        if ext == '.nrrd':
-            nrrd.write(filename, data.astype(np.uint8), index_order='C')
-        elif ext == '.npy':
-            np.save(filename, data)
-        else:
-            raise ValueError(f'Unsupported 3D image format: {ext}')
+        myio.write_volume(filename, data.astype(np.uint8),)
 
     @Clock.register(['I/O', 'csv'])
     def _save_local_distortion(self, u: npt.NDArray, v: npt.NDArray, slice_idx: int):
