@@ -356,7 +356,14 @@ class WoodMicrostructure(Clock, ABC):
         ly = (gy - 2) // 2
 
         overflow_mask = np.zeros((lx, ly), dtype=bool)
-        overflow_mask[:, ray_cell_idx] = True
+        try:
+            overflow_mask[:, ray_cell_idx] = True
+        except IndexError:
+            self.logger.error(
+                'Failed to map ray_cells to overflow_mask. Try increasing the size of the volume or adjusting the '
+                'ray_cell parameters.'
+            )
+            sys.exit(1)
         for ix, iy in indx_skip_all.reshape(-1, 2):
             if iy % 2 == 0:
                 continue
@@ -467,6 +474,7 @@ class WoodMicrostructure(Clock, ABC):
 
         ct = np.arange(int(cell_end_thick))
         fiber_end = fiber_end[..., np.newaxis] + ct[np.newaxis, np.newaxis, np.newaxis, :]
+        fiber_end[np.isnan(fiber_end)] = -1000  # Mark NaN values with -1 to avoid warning in the next steps
         fiber_end = fiber_end.reshape(lx, ly, -1).astype(int)
         fiber_end_cond = np.any(fiber_end == i_slice, axis=-1)
 
