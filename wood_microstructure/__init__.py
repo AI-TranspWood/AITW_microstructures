@@ -1,6 +1,6 @@
 """Birch data generation package."""
 
-__version__ = '0.2.0'
+__version__ = '1.1.0'
 
 from .birch import BirchMicrostructure
 from .params import BirchParams, SpruceParams
