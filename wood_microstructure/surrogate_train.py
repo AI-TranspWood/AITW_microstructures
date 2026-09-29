@@ -405,7 +405,7 @@ class TrainSurrogate(Pipeline[TrainParams]):
                         break
 
                 if self.params.save_interval > 0 and (epoch + 1) % self.params.save_interval == 0:
-                    self._save_model_weights(os.path.join(self.root_dir, f'model_epoch_{epoch + 1}.pth'))
+                    self._save_model_weights(os.path.join(self.root_dir, f'model_fold_{fold + 1}_epoch_{epoch + 1}.pth'))
 
             self.model.load_state_dict(best_model_weights)
             test_loss = self._test_loss(test_subset, fold)
