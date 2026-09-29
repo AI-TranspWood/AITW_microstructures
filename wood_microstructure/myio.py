@@ -134,4 +134,6 @@ __all__ = [
     'output_vti',
     'read_volume',
     'write_volume',
+    'read_slice',
+    'write_slice',
 ]
