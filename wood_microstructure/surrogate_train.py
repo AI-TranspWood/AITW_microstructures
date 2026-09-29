@@ -105,7 +105,7 @@ class TrainSurrogate(Pipeline[TrainParams]):
         """Initialize PyTorch and check for GPU availability."""
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         self.logger.info('PyTorch initialized successfully. Using device: %s', self.device)
-        if self.device == 'cpu':
+        if self.device.type == 'cpu':
             self.logger.warning('GPU not available. Training will be slower on CPU.')
 
     def init_pipeline(self):
