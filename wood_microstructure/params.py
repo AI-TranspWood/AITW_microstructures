@@ -677,17 +677,17 @@ class TrainParams(JsonParams):
     training_workers: int = field(
         default=4,
         metadata={
-            'help': 'Number of worker threads for loading training data',
+            'help': 'Number of threads for loading training data. 0 means loading handled by main process.',
             'group': 'Training Options',
-            'min': 1,
+            'min': 0,
         }
     )
     validation_workers: int = field(
             default=4,
             metadata={
-                'help': 'Number of worker threads for loading validation data',
+                'help': 'Number of threads for loading validation data. 0 means loading handled by main process.',
                 'group': 'Training Options',
-                'min': 1,
+                'min': 0,
             }
         )
     save_interval: int = field(
