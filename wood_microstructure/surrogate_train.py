@@ -388,7 +388,7 @@ class TrainSurrogate(Pipeline[TrainParams]):
                 )
 
                 with open(loss_curve_file, 'a') as f:
-                    f.write(f'{epoch:>6d} {train_loss:>11.7f} {val_loss:>11.7f}\n')
+                    f.write(f'{epoch+1:>6d} {train_loss:>11.7f} {val_loss:>11.7f}\n')
 
                 if val_loss < best_val_loss:
                     patience = 0
