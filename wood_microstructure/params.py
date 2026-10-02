@@ -36,6 +36,8 @@ class DelimitedList(click.ParamType):
         if self.exact_length is not None and len(res) != self.exact_length:
             self.fail(f"Expected exactly {self.exact_length} items, got {len(res)}", param, ctx)
 
+        return res
+
 
 @dataclass
 class JsonParams:
