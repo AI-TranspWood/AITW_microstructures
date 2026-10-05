@@ -8,7 +8,35 @@ from typing import ClassVar, Self
 import numpy as np
 import numpy.typing as npt
 import rich_click as click
+from click import ParamType
 from click.core import ParameterSource
+
+
+class DelimitedList(click.ParamType):
+    """A custom Click parameter type that parses a comma-separated list of values."""
+
+    name = 'list'
+
+    def __init__(self, delimiter=',', subtype=str, exact_length=None):
+        super().__init__()
+        self.delimiter = delimiter
+        self.subtype = subtype
+        self.exact_length = exact_length
+
+    def convert(self, value, param, ctx):
+        if isinstance(value, list):
+            res = [self.subtype(item) for item in value]
+        else:
+            try:
+                items = value.split(self.delimiter)
+                res = [self.subtype(item.strip()) for item in items]
+            except Exception as e:
+                self.fail(f"Could not parse list: {e}", param, ctx)
+
+        if self.exact_length is not None and len(res) != self.exact_length:
+            self.fail(f"Expected exactly {self.exact_length} items, got {len(res)}", param, ctx)
+
+        return res
 
 
 @dataclass
@@ -74,12 +102,16 @@ class JsonParams:
             overrides[name] = value
 
         for fld in fields(cls)[::-1]:
+            extra_help = ''
             metadata = getattr(fld, 'metadata', {})
             if not fld.init:
                 continue
             if fld.name.startswith('_'):
                 continue
-            if fld.type not in (int, float, str, bool):
+            if fld.type not in (
+                    int, float, str, bool,
+                    list[str], tuple[int, int, int]
+                ):
                 continue
 
             typ = fld.type
@@ -92,6 +124,14 @@ class JsonParams:
             elif typ == str:
                 if metadata.get('file', False):
                     typ = click.Path(exists=True, dir_okay=False, readable=True, resolve_path=True)
+                elif metadata.get('dir', False):
+                    typ = click.Path(exists=True, file_okay=False, readable=True, resolve_path=True)
+            elif typ == list[str]:
+                typ = DelimitedList()
+                extra_help = ' (comma-separated list)'
+            elif typ == tuple[int, int, int]:
+                typ = DelimitedList(subtype=int, exact_length=3)
+                extra_help = ' (comma-separated list of 3 integers)'
 
             expose = metadata.get('expose_value', False)
             # prefix = '--param-' if not expose else '--'
@@ -102,17 +142,22 @@ class JsonParams:
                 decl = f'{prefix}{fld.name}/{prefix}no-{fld.name}'
             name_map[f'param_{fld.name}'] = fld.name
 
-            group = metadata.get('group', OVERRIDE_GROUP)
+            required = metadata.get('required', False)
 
+            group = metadata.get('group', OVERRIDE_GROUP)
             groups.add(group)
+
+            help_str = metadata.get('help', None)
+            if help_str is not None and extra_help:
+                help_str += extra_help
 
             kwargs = {
                 'type': typ,
                 'is_flag': fld.type == bool,
-                'required': False,
+                'required': required,
                 'expose_value': expose,
                 'callback': callback,
-                'help': metadata.get('help', None),
+                'help': help_str,
                 'panel': group,
             }
 
@@ -131,7 +176,7 @@ class JsonParams:
         return func
 
 @dataclass
-class BaseParams(JsonParams):
+class BaseWoodParams(JsonParams):
     """Base class for parameters"""
     # period_parameter: int  # This parameter is related to the period of the year ring size
     period_parameter: int = field(metadata={'help': 'This parameter is related to the period of the year ring size'})
@@ -187,6 +232,13 @@ class BaseParams(JsonParams):
         default=False,
         metadata={
             'help': 'Whether to use surrogate model for local deformation',
+        },
+    )
+    weight_file: str = field(
+        default=None,
+        metadata={
+            'help': 'Path to the weight file for the surrogate model',
+            'file': True,
         },
     )
     binarize_threshold: int = field(
@@ -347,7 +399,7 @@ class BaseParams(JsonParams):
 
 def with_default(field_name: str, default, **kwargs) -> Field:
     """Return a new field of `BaseParams` with the default value replaced"""
-    fld: Field = BaseParams.__dataclass_fields__[field_name]
+    fld: Field = BaseWoodParams.__dataclass_fields__[field_name]
     new = copy(fld)
     new.default = default
     for key, value in kwargs.items():
@@ -355,7 +407,7 @@ def with_default(field_name: str, default, **kwargs) -> Field:
     return new
 
 @dataclass
-class BirchParams(BaseParams):
+class BirchParams(BaseWoodParams):
     """Define the parameters for birch"""
     period_parameter: int = with_default('period_parameter', default=0)
 
@@ -382,7 +434,7 @@ class BirchParams(BaseParams):
 
 
 @dataclass
-class SpruceParams(BaseParams):
+class SpruceParams(BaseWoodParams):
     """Define the parameters for spruce"""
     period_parameter: int = with_default('period_parameter', default=1000)
 
@@ -518,5 +570,173 @@ class FitPorosityParams(JsonParams):
         metadata={
             'help': 'Remove thin protrusions (iterations). 0=off, 2-3 for aggressive filtering.',
             'min': 0,
+        }
+    )
+
+@dataclass
+class TrainParams(JsonParams):
+    """Define the parameters for training the surrogate model"""
+    train_dir: str = field(
+        default=None,
+        metadata={
+            'help': 'Directory containing training data',
+            'group': 'Dataset Options',
+            'dir': True,
+            'required': True,
+        }
+    )
+    validation_dir: str = field(
+        default=None,
+        metadata={
+            'help': (
+                'Directory containing validation data. '
+                'IF NOT PROVIDED, training data will be split for validation.'
+            ),
+            'group': 'Dataset Options',
+            'dir': True,
+            # 'required': True,
+        }
+    )
+    test_dir: str = field(
+        default=None,
+        metadata={
+            'help': 'Directory containing test data. IF NOT PROVIDED, training data will be split for testing.',
+            'group': 'Dataset Options',
+            'dir': True,
+            # 'required': True,
+        }
+    )
+
+    backbone_subdir: str = field(
+        default='volImgBackBone',
+        metadata={
+            'help': 'Subdirectory name for the undistorted backbone images within the train/validation/test directories',
+            'group': 'Dataset Options',
+        }
+    )
+    distorted_subdir: str = field(
+        default='LocalDistVolume',
+        metadata={
+            'help': 'Subdirectory name for the distorted images within the train/validation/test directories',
+            'group': 'Dataset Options',
+        }
+    )
+    u_map_subdir: str = field(
+        default='LocalDistVolumeDispU',
+        metadata={
+            'help': 'Subdirectory name for the u displacement maps within the train/validation/test directories',
+            'group': 'Dataset Options',
+        }
+    )
+    v_map_subdir: str = field(
+        default='LocalDistVolumeDispV',
+        metadata={
+            'help': 'Subdirectory name for the v displacement maps within the train/validation/test directories',
+            'group': 'Dataset Options',
+        }
+    )
+
+    learning_rate: float = field(
+        default=2e-4,
+        metadata={
+            'help': 'Learning rate for training the surrogate model',
+            'group': 'Training Options',
+            'min': 1e-8, 'max': 1.0,
+        }
+    )
+    epochs: int = field(
+        default=1000,
+        metadata={
+            'help': 'Number of epochs for training the surrogate model',
+            'group': 'Training Options',
+            'min': 1,
+        }
+    )
+    training_batch_size: int = field(
+        default=2,
+        metadata={
+            'help': 'Batch size for training the surrogate model',
+            'group': 'Training Options',
+            'min': 1,
+        }
+    )
+    validation_batch_size: int = field(
+        default=2,
+        metadata={
+            'help': 'Batch size for validation during training the surrogate model',
+            'group': 'Training Options',
+            'min': 1,
+        }
+    )
+    patience: int = field(
+        default=20,
+        metadata={
+            'help': 'Number of epochs with no improvement after which training will be stopped (early stopping)',
+            'group': 'Training Options',
+            'min': 1,
+        }
+    )
+    training_workers: int = field(
+        default=4,
+        metadata={
+            'help': 'Number of threads for loading training data. 0 means loading handled by main process.',
+            'group': 'Training Options',
+            'min': 0,
+        }
+    )
+    validation_workers: int = field(
+            default=4,
+            metadata={
+                'help': 'Number of threads for loading validation data. 0 means loading handled by main process.',
+                'group': 'Training Options',
+                'min': 0,
+            }
+        )
+    save_interval: int = field(
+        default=100,
+        metadata={
+            'help': 'Save model checkpoint every N epochs. Set to 0 to disable checkpoint saving.',
+            'group': 'Training Options',
+            'min': 0,
+        }
+    )
+
+    pretrain_weights: str = field(
+        default=None,
+        metadata={
+            'help': 'Path to pre-trained model weights to initialize training. If None, training starts from scratch.',
+            'group': 'Transfer Options',
+            'file': True,
+        }
+    )
+    frozen_layers: list[str] = field(
+        default_factory=list,
+        metadata={
+            'help': 'List of layer names to freeze during training. If empty, all layers are trainable.',
+            'group': 'Transfer Options',
+        }
+    )
+
+    cross_validation: bool = field(
+        default=False,
+        metadata={
+            'help': 'Whether to use cross-validation for training the surrogate model',
+            'group': 'Cross-Validation Options',
+        }
+    )
+    num_folds: int = field(
+        default=5,
+        metadata={
+            'help': 'Number of folds for cross-validation',
+            'group': 'Cross-Validation Options',
+            'min': 1,
+        }
+    )
+    train_ratio: float = field(
+        default=0.9,
+        metadata={
+            'help': 'Ratio of training data in each fold for cross-validation',
+            'group': 'Cross-Validation Options',
+            'min': 0.0, 'max': 1.0,
         }
     )

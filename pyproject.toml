@@ -38,7 +38,11 @@ Source = "https://github.com/AI-TranspWood/AITW_microstructures"
 surrogate = [
     "torch",
     "pooch",
-    "tqdm",
+]
+surrogate_train = [
+    "torch",
+    "torchvision",
+    "scikit-learn",
 ]
 gpu_griddata = [
     "cupy",

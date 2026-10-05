@@ -12,6 +12,10 @@ on:
             - "examples/**"
     pull_request:
 
+concurrency:
+  group: ${{format('{0}:{1}:{2}', github.repository, github.ref, github.workflow)}}
+  cancel-in-progress: true
+
 jobs:
     pre-commit:
         runs-on: ubuntu-latest
@@ -60,7 +64,7 @@ jobs:
                   python-version: ${{ matrix.python-version }}
 
             - name: Install Python dependencies
-              run: pip install -e .
+              run: pip install -e .[surrogate,surrogate_train]
 
             - name: Run wood_ms
               run: |
@@ -81,6 +85,17 @@ jobs:
                     echo "Birch generation did not use the override random seed" ; exit 1
                 )
 
+
+                wood_ms generate birch --config-file examples/small.json --surrogate
+                [ -f SaveBirch_1/wood_microstructure.log ] || (
+                    echo "Birch generation with SURROGATE failed. Log file not found." ; exit 1
+                )
+                [ -f SaveBirch_1/params.json ] || ( echo "Birch generation with SURROGATE failed. Params file not found." ; exit 1 )
+                [ -f SaveBirch_1/FinalVolume3D/FinalVolume.nrrd ] || (
+                    echo "Birch generation with SURROGATE failed. Final volume file not found." ; exit 1
+                )
+
+
                 wood_ms generate spruce --config-file examples/small.json --random_seed 456
                 [ -f SaveSpruce_0/wood_microstructure.log ] || (
                     echo "Spruce generation failed. Log file not found." ; exit 1
@@ -96,5 +111,32 @@ jobs:
                     echo "Spruce generation did not use the override random seed" ; exit 1
                 )
 
+
                 wood_ms postproc volume-convert-format SaveBirch_0/FinalVolume3D/FinalVolume.nrrd test.npy
                 [ -f test.npy ] || ( echo "Volume conversion failed" ; exit 1 )
+
+
+                mkdir Dataset
+                cp -r SaveBirch_0 Dataset/train
+                cp -r SaveBirch_1 Dataset/valid
+                cp -r SaveBirch_0 Dataset/test
+                wood_ms train --train_dir Dataset/train/ --validation_dir Dataset/valid/ --test_dir Dataset/test/ --epochs 2
+                grep -q 'Time report:' train_surrogate_0/train.log || (
+                    echo "Training did not complete successfully" ; exit 1
+                )
+                [ -f train_surrogate_0/best_model.pth ] || ( echo "Training failed. Model file not found." ; exit 1 )
+                [ -f train_surrogate_0/losses.json ] || ( echo "Training test failed. Losses file not found." ; exit 1 )
+                [ -f train_surrogate_0/params.json ] || ( echo "Training failed. Params file not found." ; exit 1 )
+                [ -d train_surrogate_0/test_output_fold_1 ] || ( echo "Training test failed. Test output directory not found." ; exit 1 )
+                [ -f train_surrogate_0/test_output_fold_1/volImgRef_00001.tiff ] || ( echo "Training test failed. Test output file not found." ; exit 1 )
+
+                wood_ms train --train_dir Dataset/train/ --epochs 2 --cross_validation --num_folds 1
+                grep -q 'Time report:' train_surrogate_1/train.log || (
+                    echo "Training did not complete successfully" ; exit 1
+                )
+                [ -f train_surrogate_1/best_model.pth ] || ( echo "Training failed. Model file not found." ; exit 1 )
+                [ -f train_surrogate_1/best_model_fold_3.pth ] || ( echo "Training failed. Model file for last fold not found." ; exit 1 )
+                [ -f train_surrogate_1/losses.json ] || ( echo "Training test failed. Losses file not found." ; exit 1 )
+                [ -f train_surrogate_1/params.json ] || ( echo "Training failed. Params file not found." ; exit 1 )
+                [ -d train_surrogate_1/test_output_fold_1 ] || ( echo "Training test failed. Test output directory 1 not found." ; exit 1 )
+                [ -d train_surrogate_1/test_output_fold_3 ] || ( echo "Training test failed. Test output directory 3 not found." ; exit 1 )
