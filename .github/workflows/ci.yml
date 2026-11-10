@@ -68,3 +68,27 @@ jobs:
 
             - name: Run tests
               run: pytest -sv --disable-warnings
+
+    test-eessi:
+        runs-on: ubuntu-latest
+
+        steps:
+        - uses: actions/checkout@v3
+
+        - name: Set up EESSI environment
+          uses: eessi/github-action-eessi@v3
+          with:
+            eessi_stack_version: '2023.06'
+
+        - name: Cache deps built on top of EESSI
+          uses: actions/cache@v3
+          with:
+            path: ~/eessi
+            key: eessi-builds-${{ hashFiles('**/pyproject.toml') }}
+            restore-keys: eessi-builds
+
+        - name: Test building with EESSI
+          run: |
+              module load EESSI-extend
+              unset EASYBUILD_DEBUG
+              eb --logtostdout --software-commit=$GITHUB_SHA .github/ci.eb --rebuild
