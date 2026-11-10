@@ -4,6 +4,33 @@ Port of the [AITW microstructure generation code](https://github.com/BinChenOPEN
 
 ## Install
 
+### From EESSI
+
+Check the [EESSI documentation](https://www.eessi.io/docs/available_software/detail/AITW-microstructures/) to see on which version of EESSI the package is available.
+
+Run on a [system with EESSI pre-installed](https://www.eessi.io/docs/systems/) or [install EESSI on your own system](https://www.eessi.io/docs/getting_access/native_installation/)
+
+Load the package from EESSI:
+
+```bash
+# Follow instructions of your system to initialize EESSI
+# For a local/native installation:
+# source /cvmfs/software.eessi.io/versions/2023.06/init/lmod/bash
+
+module load EESSI/2023.06  # Or the latest version that has the package available
+module load AITW-microstructures
+```
+
+### From PyPI
+
+```bash
+pip install AITW_wood_microstructure
+```
+
+### From source (development version)
+
+Download the source code and install it using pip.
+
 ```bash
 cd <PATH to folder with pyproject.toml>
 pip install .
@@ -59,3 +86,7 @@ You can also add it to either `~/.bashrc` or, if you are using a virtual environ
 - W.R.T the matlab code, `saveSlice` in the json file can be a `list[int]` instead of just an `int` or `"all"` to work-on/save all slices.
 - Most functions have been optimized to have the loop over the Z slices as the outermost one.
   Since the Z slices are almost always treated independently, we can than run the loops over only the slices of interest.
+
+## References
+
+- [Mińkowski, Marcin, et al. Next Materials 13 (2026): 102641.](https://doi.org/10.1016/j.nxmate.2026.102641)
