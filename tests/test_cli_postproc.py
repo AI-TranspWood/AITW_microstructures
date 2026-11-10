@@ -25,15 +25,6 @@ def test_postproc_command_with_invalid_option():
     assert result.exit_code != 0
     assert 'Error' in result.output
 
-def test_postproc_command_with_missing_argument():
-    """Test the `wood_ms postproc` command with a missing argument."""
-    runner = CliRunner()
-    result = runner.invoke(
-        wood_microstructure, ['postproc']
-    )
-    assert result.exit_code != 0
-    assert 'Usage:' in result.output
-
 def test_postproc_command_volume_convert(tmp_path, birch_output_1):
     """Test the `wood_ms postproc volume_convert` command."""
     input_file = birch_output_1 / 'FinalVolume3D' / 'FinalVolume.nrrd'

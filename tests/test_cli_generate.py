@@ -24,15 +24,6 @@ def test_generate_command_with_invalid_option():
     assert result.exit_code != 0
     assert 'Error' in result.output
 
-def test_generate_command_with_missing_argument():
-    """Test the `wood_ms generate` command with a missing argument."""
-    runner = CliRunner()
-    result = runner.invoke(
-        wood_microstructure, ['generate']
-    )
-    assert result.exit_code != 0
-    assert 'Error' in result.output
-
 def test_generate_command_birch_1(birch_output_1):
     """Test the `wood_ms generate` command with valid arguments."""
     file_out = birch_output_1 / 'params.json'

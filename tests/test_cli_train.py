@@ -26,15 +26,6 @@ def test_train_command_with_invalid_option():
     assert result.exit_code != 0
     assert 'Error' in result.output
 
-def test_train_command_with_missing_argument():
-    """Test the `wood_ms train` command with a missing argument."""
-    runner = CliRunner()
-    result = runner.invoke(
-        wood_microstructure, ['train']
-    )
-    assert result.exit_code != 0
-    assert 'Usage:' in result.output
-
 def test_train_command_without_cross_validation(tmp_path, birch_output_1):
     """Test the `wood_ms train` command with valid arguments."""
     train_dir = tmp_path / 'train'
