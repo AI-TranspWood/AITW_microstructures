@@ -55,7 +55,6 @@ exts_list = [
             'download_filename': '%(software_commit)s.tar.gz',
             'filename': '%(software_commit)s.tar.gz',
         }],
-        'checksums': ['cf7b0703e488954433d0612c6100c2eaafcdb417e3f8f465c4a37ff22f778784'],
         'testinstall': True,
         'runtest': 'pytest -sv --disable-warnings',
     }),
