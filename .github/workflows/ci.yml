@@ -81,7 +81,9 @@ jobs:
             eessi_stack_version: '2023.06'
 
         - name: Test building with EESSI
+          env:
+            SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           run: |
               module load EESSI-extend
               unset EASYBUILD_DEBUG
-              eb --logtostdout --software-commit=$GITHUB_SHA .github/ci.eb --rebuild
+              eb --logtostdout --software-commit=${SOURCE_SHA} .github/ci.eb --rebuild
