@@ -1576,7 +1576,10 @@ class WoodMicrostructure(Pipeline[BaseWoodParams], ABC):
 
         output_dir = os.path.join(self.root_dir, 'PorosityFitting')
 
-        FitPorosity.run_from_dict(data, output_dir=output_dir, loglevel=self.handler_level)
+        FitPorosity.run_from_dict(
+            data=data, output_dir=output_dir, loglevel=self.handler_level,
+            rich_live=self.rich_live,
+        )
 
     def initialize_volume(self) -> npt.NDArray:
         """Initialize the volume image with the reference image (without deformation)"""
