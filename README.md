@@ -58,15 +58,16 @@ The installation will make available a `wood_ms` command line interface.
 
 - Run `wood_ms --help` to see the available commands.
 - Run `wood_ms generate --help` to see all available options for generating microstructures.
-- Run `wood_ms generate WOOD_TYPE JSON_FILE` to generate a microstructure of type `WOOD_TYPE` using the parameters in `JSON_FILE`.
+- Run `wood_ms generate WOOD_TYPE --config-file JSON_FILE` to generate a microstructure of type `WOOD_TYPE` using the parameters in `JSON_FILE`.
   - `WOOD_TYPE` can be one of: `birch`, `spruce`.
   - `JSON_FILE` is a path to a json file with the parameters for the microstructure generation.
 - Run `wood_ms postproc --help` flag to see all available commands for postprocessing.
+- Run `wood_ms train --help` flag to see all available options for training a model.
 
 Example for birch microstructure generation:
 
 ```bash
-wood_ms generate birch examples/example_birch.json
+wood_ms generate birch --config-file examples/example_birch.json
 ```
 
 #### Tab autocompletion
